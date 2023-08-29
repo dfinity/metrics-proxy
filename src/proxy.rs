@@ -495,7 +495,7 @@ node_softnet_times_squeezed_total{cpu="1"} 0
         let adapter = make_adapter_filter_tester(
             serde_yaml::from_str(
                 r#"
-- regex: node_softnet_times_squeezed_total
+- regex: node_frobnicated
   actions:
   - cache:
       duration: 10ms
@@ -508,9 +508,9 @@ node_softnet_times_squeezed_total{cpu="1"} 0
         // will not be filtered.  Input should be same as output.
         let first_input = TestPayload::from_text(
             r#"
-# HELP node_softnet_times_squeezed_total Number of times processing packets ran out of quota
-# TYPE node_softnet_times_squeezed_total counter
-node_softnet_times_squeezed_total{cpu="0"} 0
+# HELP node_frobnicated Number of times processing packets ran out of quota
+# TYPE node_frobnicated counter
+node_frobnicated{cpu="0"} 0
 "#,
         );
         let first_filtered = adapter.apply_filters(first_input.parsed_scrape);
@@ -526,9 +526,9 @@ node_softnet_times_squeezed_total{cpu="0"} 0
         // the same as the input of the prior filter run.
         let second_input = TestPayload::from_text(
             r#"
-# HELP node_softnet_times_squeezed_total Number of times processing packets ran out of quota
-# TYPE node_softnet_times_squeezed_total counter
-node_softnet_times_squeezed_total{cpu="0"} 25
+# HELP node_frobnicated Number of times processing packets ran out of quota
+# TYPE node_frobnicated counter
+node_frobnicated{cpu="0"} 25
 "#,
         );
         let second_output =
