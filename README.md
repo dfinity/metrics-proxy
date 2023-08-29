@@ -31,11 +31,13 @@ proxies:
 ```
 
 Another sample configuration file has been included with the source
-at [example-config.yaml](./example-config.yaml).
+at [`example-config.yaml`](./example-config.yaml).
+
+The meaning of each structure in the configuration file is explained below.
 
 ### `proxies`
 
-A list of dictionaries, each of which must contain a `proxy` object.
+A top-level list of dictionaries, each of which must contain a `proxy` object.
 
 ### `proxy`
 
