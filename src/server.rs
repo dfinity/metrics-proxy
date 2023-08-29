@@ -55,23 +55,23 @@ impl Server {
 
         for (path, target) in self.config.handlers.clone().into_iter() {
             let state = Arc::new(proxy::ProxyAdapter::new(target));
-            let bodytimeout = tower_http::timeout::RequestBodyTimeoutLayer::new(
-                self.config.client_request_timeout,
-            );
+            let bodytimeout =
+                tower_http::timeout::RequestBodyTimeoutLayer::new(self.config.header_read_timeout);
             router = router.route(
                 path.as_str(),
                 get(handle_with_proxy).with_state(state).layer(bodytimeout),
             );
         }
 
-        let timeouter = tower_http::timeout::TimeoutLayer::new(self.config.proxy_response_timeout);
+        let timeouter =
+            tower_http::timeout::TimeoutLayer::new(self.config.request_response_timeout);
         router = router.layer(timeouter);
 
         let addr = SocketAddr::new(self.config.host, self.config.port);
         let maybe_bound = axum::Server::try_bind(&addr);
         match maybe_bound {
             Ok(bound) => match bound
-                .http1_header_read_timeout(self.config.client_request_timeout)
+                .http1_header_read_timeout(self.config.header_read_timeout)
                 .serve(router.into_make_service())
                 .await
             {

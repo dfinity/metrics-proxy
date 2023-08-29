@@ -81,10 +81,10 @@ pub struct ConfigListenOn {
     pub method: ServerMethod,
     pub host: IpAddr,
     pub port: u16,
-    #[serde(default = "default_client_request_timeout")]
-    pub client_request_timeout: DurationString,
-    #[serde(default = "default_proxy_response_timeout")]
-    pub proxy_response_timeout: DurationString,
+    #[serde(default = "default_header_read_timeout")]
+    pub header_read_timeout: DurationString,
+    #[serde(default = "default_request_response_timeout")]
+    pub request_response_timeout: DurationString,
     pub handler: String,
 }
 
@@ -94,10 +94,10 @@ struct ConfigListenOnInConfigFile {
     method: ServerMethod,
     address: String,
     handler: String,
-    #[serde(default = "default_client_request_timeout")]
-    client_request_timeout: DurationString,
-    #[serde(default = "default_proxy_response_timeout")]
-    proxy_response_timeout: DurationString,
+    #[serde(default = "default_header_read_timeout")]
+    header_read_timeout: DurationString,
+    #[serde(default = "default_request_response_timeout")]
+    request_response_timeout: DurationString,
 }
 
 enum ConfigListenOnParseError {
@@ -160,8 +160,8 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
             host: host,
             port: port,
             handler: other.handler,
-            client_request_timeout: other.client_request_timeout,
-            proxy_response_timeout: other.proxy_response_timeout,
+            header_read_timeout: other.header_read_timeout,
+            request_response_timeout: other.request_response_timeout,
         })
     }
 }
@@ -170,11 +170,11 @@ fn default_timeout() -> DurationString {
     DurationString::new(Duration::new(30, 0))
 }
 
-fn default_client_request_timeout() -> DurationString {
+fn default_header_read_timeout() -> DurationString {
     DurationString::new(Duration::new(5, 0))
 }
 
-fn default_proxy_response_timeout() -> DurationString {
+fn default_request_response_timeout() -> DurationString {
     let df: Duration = default_timeout().into();
     DurationString::new(df + Duration::new(5, 0))
 }
@@ -295,8 +295,8 @@ pub struct HttpProxy {
     method: ServerMethod,
     pub host: IpAddr,
     pub port: u16,
-    pub client_request_timeout: Duration,
-    pub proxy_response_timeout: Duration,
+    pub header_read_timeout: Duration,
+    pub request_response_timeout: Duration,
     pub handlers: HashMap<String, HttpProxyTarget>,
 }
 
@@ -312,8 +312,8 @@ pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
                     method: listen_on.method,
                     host: listen_on.host,
                     port: listen_on.port,
-                    client_request_timeout: listen_on.client_request_timeout.into(),
-                    proxy_response_timeout: listen_on.proxy_response_timeout.into(),
+                    header_read_timeout: listen_on.header_read_timeout.into(),
+                    request_response_timeout: listen_on.request_response_timeout.into(),
                     handlers: HashMap::new(),
                 },
             );
@@ -344,8 +344,8 @@ pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
                     method: oldserver.method,
                     host: oldserver.host.clone(),
                     port: oldserver.port,
-                    client_request_timeout: oldserver.client_request_timeout.clone(),
-                    proxy_response_timeout: oldserver.proxy_response_timeout.clone(),
+                    header_read_timeout: oldserver.header_read_timeout.clone(),
+                    request_response_timeout: oldserver.request_response_timeout.clone(),
                     handlers: concathandlers,
                 },
             );
