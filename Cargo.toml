@@ -23,3 +23,4 @@ regex = "1.9.1"
 serde_regex = "1.1.0"
 itertools = "0.11.0"
 dissimilar = "1.0.7"
+clap = { version = "4.4.1", features = ["derive"] }

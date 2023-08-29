@@ -9,6 +9,7 @@ use serde_yaml::{self};
 use std::collections::HashMap;
 use std::fmt;
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -234,7 +235,7 @@ impl From<serde_yaml::Error> for LoadConfigError {
     }
 }
 
-pub fn load_config(path: String) -> Result<Config, LoadConfigError> {
+pub fn load_config(path: PathBuf) -> Result<Config, LoadConfigError> {
     let f = std::fs::File::open(path.clone())?;
     let maybecfg: Result<Config, serde_yaml::Error> = serde_yaml::from_reader(f);
     if let Err(error) = maybecfg {

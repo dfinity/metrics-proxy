@@ -1,12 +1,19 @@
+use clap::Parser;
 use tokio;
 use tokio::task::JoinSet;
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct MetricsProxyArgs {
+    config: std::path::PathBuf,
+}
+
 #[tokio::main]
 async fn main() {
-    let f = "config.yaml".to_string();
-    let maybecfg = metrics_proxy::config::load_config(f.clone());
+    let args = MetricsProxyArgs::parse();
+    let maybecfg = metrics_proxy::config::load_config(args.config.clone());
     if let Err(error) = maybecfg {
-        println!("Error parsing {}: {}", f, error);
+        println!("Error parsing {}: {}", args.config.display(), error);
         return;
     }
     let cfg = maybecfg.unwrap();
