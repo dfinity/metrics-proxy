@@ -1,0 +1,17 @@
+proxies:
+  - listen_on:
+      address: 0.0.0.0:18080
+      handler: /metrics
+    connect_to:
+      method: http
+      address: localhost:9100
+      handler: /metrics
+    label_filters:
+      - regex: .*
+        actions:
+          - drop
+      - regex: node_cpu_.*
+        actions:
+          - cache:
+              duration: 5s
+          - keep
