@@ -3,6 +3,7 @@ proxies:
       address: 0.0.0.0:18080
       handler: /metrics
     connect_to:
+      # can't we just configure it as `url: http://localhost:9100`
       method: http
       address: localhost:9100
       handler: /metrics

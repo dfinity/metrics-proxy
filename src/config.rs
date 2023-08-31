@@ -15,6 +15,7 @@ use std::time::Duration;
 
 #[derive(Deserialize_enum_str, Serialize_enum_str, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "snake_case")]
+// Protocol
 pub enum Method {
     Http,
     Https,
@@ -28,6 +29,7 @@ impl Default for Method {
 /* FIXME: implement HTTPS */
 #[derive(Deserialize_enum_str, Serialize_enum_str, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "snake_case")]
+// Protocol. What's the different between these? what required
 pub enum ServerMethod {
     Http,
 }
@@ -39,12 +41,14 @@ impl Default for ServerMethod {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
+// Don't we just want to "allow" certain metrics. would it be enough to just have single allow filter to reduce the amount of code?
 pub enum ConfigLabelFilterAction {
     Keep,
     Drop,
     Cache { duration: DurationString },
 }
 
+// Why not just let the user specify the full regex however they want and keep the code simpler? users can always hack this by adding .* on stard/end
 fn anchored_regex<'de, D>(deserializer: D) -> Result<regex::Regex, D::Error>
 where
     D: Deserializer<'de>,
@@ -67,6 +71,10 @@ fn default_label_separator() -> String {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ConfigLabelFilter {
+    // if i understand correctly, we're applying actions based on labels to drop certain metrics or not.
+    // it seems it's mostly useful to drop metrics based on their name, and not any other label so i'm not sure if we need something like this
+    // this design seems to complicate the code a fair bit, although it is more generic than separately filtering by label / name
+    // Side note, it might be needed to drop labels from certain metrics instead of filtering on labels, but i don't have any information about this and would wait for until and if we need it to implement it.
     #[serde(default = "default_source_labels")]
     pub source_labels: Vec<String>,
     #[serde(default = "default_label_separator")]
@@ -79,11 +87,17 @@ pub struct ConfigLabelFilter {
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "ConfigListenOnInConfigFile")]
 pub struct ConfigListenOn {
+    // Protocol
+    // Instead it might be better to specify tlsConfig, if specified, server automatically serves only https requests instead
     pub method: ServerMethod,
+    // looks like it would be easier to accept just a string like in the example: https://github.com/tokio-rs/axum#usage-example
+    // then you wouldn't need additional 80 lines of code for converting host and port from string into concrete types
     pub host: IpAddr,
     pub port: u16,
+    // Can we use the same value timeouts for both header and read?
     #[serde(default = "default_header_read_timeout")]
     pub header_read_timeout: DurationString,
+    // maybe just use timeout_seconds? probably not necessary to define this timeout in any other unit of time
     #[serde(default = "default_request_response_timeout")]
     pub request_response_timeout: DurationString,
     pub handler: String,
@@ -91,6 +105,7 @@ pub struct ConfigListenOn {
 
 #[derive(Debug, Deserialize)]
 struct ConfigListenOnInConfigFile {
+    // Protocol
     #[serde(default)]
     method: ServerMethod,
     address: String,
@@ -182,6 +197,8 @@ fn default_request_response_timeout() -> DurationString {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ConfigConnectTo {
+    // protocol
+    // I think i wrote elsewhere that it's probably easier to just configure url instead of 3 different fields
     #[serde(default)]
     pub method: Method,
     pub address: String,
@@ -286,6 +303,7 @@ pub fn load_config(path: PathBuf) -> Result<Config, LoadConfigError> {
     Ok(cfg)
 }
 
+// Both of these configs are basically copies of existing structs in config. We should just create a server directly from those configs
 #[derive(Debug, Clone)]
 pub struct HttpProxyTarget {
     pub connect_to: ConfigConnectTo,
@@ -301,6 +319,7 @@ pub struct HttpProxy {
     pub handlers: HashMap<String, HttpProxyTarget>,
 }
 
+// what's the purpose of this function? it seems like it's just copying the same data into mostly the same struct
 pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
     let mut servers: HashMap<String, HttpProxy> = HashMap::new();
     for proxy in config.proxies {

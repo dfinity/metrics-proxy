@@ -21,6 +21,7 @@ impl OrderedLabelSet {
             name: "__name__".to_string(),
             value: x.metric.to_string(),
         });
+        // labelset.append(x.labels.map)
         for (k, v) in x.labels.iter() {
             labelset.push(LabelPair {
                 name: k.to_string(),
@@ -50,6 +51,7 @@ impl SampleCache {
             cache: HashMap::new(),
         };
     }
+    
     pub fn get(
         &self,
         sample: &prometheus_parse::Sample,

@@ -12,6 +12,7 @@ use std::iter::zip;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+// it's not clear what this variable stands for until you read implementation below.
 static HOPBYHOP: [&'static str; 8] = [
     "keep-alive",
     "transfer-encoding",
@@ -30,6 +31,11 @@ fn safely_clone_response_headers(orgheaders: header::HeaderMap) -> http::HeaderM
     // println!("Original: {:?}", orgheaders);
     let mut headers = http::HeaderMap::new();
     for (k, v) in orgheaders.into_iter() {
+        // Dangerously close to one more k :D
+        // Might be better to shadow
+        // if let Some(k) = k {
+        // or modify the iter to remove entries without header key
+        // orgheaders.into_iter().filter_map(|(k, v)| k.map(|k| (k, v)))
         if let Some(kk) = k {
             let lower = kk.to_string().to_lowercase();
             if !HOPBYHOP.contains(&lower.as_str()) && !STRIP_FROM_RESPONSE.contains(&lower.as_str())
@@ -45,6 +51,7 @@ fn safely_clone_response_headers(orgheaders: header::HeaderMap) -> http::HeaderM
 fn safely_clone_request_headers(orgheaders: http::HeaderMap) -> header::HeaderMap {
     // println!("Original: {:?}", orgheaders);
     let mut headers = header::HeaderMap::new();
+    // same as bove irt headers
     for (k, v) in orgheaders.into_iter() {
         if let Some(kk) = k {
             if PROXIED_CLIENT_HEADERS.contains(&kk.to_string().to_lowercase().as_str()) {
@@ -62,6 +69,7 @@ fn fallback_headers() -> header::HeaderMap {
     fallback_headers
 }
 
+// although functions can be scoped within other functions, in this case it seems way beyond neccessary. makes this code very hard to read
 fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
     fn render_sample(sample: &prometheus_parse::Sample) -> Vec<String> {
         fn render_labels(labels: &prometheus_parse::Labels, extra: Option<String>) -> String {
@@ -184,6 +192,7 @@ fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
 #[derive(Clone)]
 pub struct ProxyAdapter {
     target: HttpProxyTarget,
+    // ??
     cache: Arc<Mutex<SampleCache>>, // FIXME cache
 }
 
@@ -191,6 +200,7 @@ impl ProxyAdapter {
     pub fn new(target: HttpProxyTarget) -> Self {
         ProxyAdapter {
             target: target,
+            // ??
             cache: Arc::new(Mutex::new(SampleCache::new())), // FIXME cache
         }
     }
@@ -245,6 +255,7 @@ impl ProxyAdapter {
             } else if labels.contains_key(label_name.as_str()) {
                 labels.get(label_name.as_str()).unwrap().to_string()
             } else {
+                // Seems like you would want to return error here
                 // No label with that name.  No match.
                 "".to_string()
             }
@@ -264,6 +275,7 @@ impl ProxyAdapter {
                 let mut cache_sample = false;
 
                 for selector in selectors.iter() {
+                    // no need to introduce a variable that is only used once
                     let source_labels = &selector.source_labels;
                     let label_values = source_labels
                         .into_iter()
@@ -351,6 +363,7 @@ mod tests {
         buf
     }
 
+    // i would avoid macros at almost all costs. instead search for a library that does this: like https://github.com/mitsuhiko/similar, or use plain assert_eq
     macro_rules! assert_eq_text {
         ($left:expr, $right:expr) => {
             assert_eq_text!($left, $right,)

@@ -8,9 +8,12 @@ struct MetricsProxyArgs {
     config: std::path::PathBuf,
 }
 
+// main can return a result
 #[tokio::main]
 async fn main() {
     let args = MetricsProxyArgs::parse();
+    // this is more idiomatic
+    // let cfg = load_config().map_err()?;
     let maybecfg = metrics_proxy::config::load_config(args.config.clone());
     if let Err(error) = maybecfg {
         println!("Error parsing {}: {}", args.config.display(), error);
@@ -27,6 +30,7 @@ async fn main() {
     }
     while let Some(res) = set.join_next().await {
         if let Err(error) = res.unwrap() {
+            // return res
             panic!("Fatal HTTP server failure: {}", error);
         }
     }

@@ -30,12 +30,15 @@ pub struct Server {
 }
 
 impl Server {
+    // don't understand what this is about
     // FIXME: handle HTTPS method in HttpProxy field.
+    // implement server request timeouts?
     // FIXME: apply client request timeout starting from
     // socket accept, such that the socket is closed completely
     // when the client hangs on there without sending any data.
     // -- otherwise clients can hold HTTP connections open
     // for no reason during extended periods of time.
+    // seems like a premature optimization perhaps. not sure if it ever would be necessary
     // FIXME: wholepage caching to be implemented, only
     // for valid 200 OK responses, as a layer of the method
     // router rather than at the top level app router.
@@ -56,6 +59,7 @@ impl Server {
         for (path, target) in self.config.handlers.clone().into_iter() {
             let state = Arc::new(proxy::ProxyAdapter::new(target));
             let bodytimeout =
+                // did you want to use config.config.header_read_timeout here?
                 tower_http::timeout::RequestBodyTimeoutLayer::new(self.config.header_read_timeout);
             router = router.route(
                 path.as_str(),
