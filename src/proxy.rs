@@ -331,7 +331,7 @@ impl ProxyAdapter {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{ConfigConnectTo, ConfigLabelFilter, HttpProxyTarget, Method};
+    use crate::config::{ConfigConnectTo, ConfigLabelFilter, HttpProxyTarget, Protocol};
     use dissimilar::diff as __diff;
     use duration_string::DurationString;
     use std::time::Duration;
@@ -374,7 +374,7 @@ mod tests {
     fn make_test_proxy_target(filters: Vec<ConfigLabelFilter>) -> HttpProxyTarget {
         HttpProxyTarget {
             connect_to: ConfigConnectTo {
-                method: Method::Http,
+                protocol: Protocol::Http,
                 address: "localhost:8080".to_string(),
                 handler: "/metrics".to_string(),
                 timeout: DurationString::new(Duration::new(5, 0)),

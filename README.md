@@ -16,7 +16,7 @@ proxies:
       address: 0.0.0.0:18080
       handler: /metrics
     connect_to:
-      method: http
+      protocol: http
       address: localhost:9100
       handler: /metrics
     label_filters:
@@ -53,8 +53,8 @@ A dictionary of `address` (host / port) and `handler` (HTTP path of the
 proxy, which must be rooted at `/`).  The address and handler together
 are used to produce the final result URL on which this proxy will answer.
 
-Optionally, the `method` key can be `http` or `https`.  If HTTPS is
-enabled using this method, then options `key_file` and `certificate_file`
+Optionally, the `protocol` key can be `http` or `https`.  If HTTPS is
+enabled using this setting, then options `key_file` and `certificate_file`
 must be paths pointing to a valid X.509 key file and certificate file
 respectively.  Test certificates can be generated with command
 `openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -days 365 -out certificate.pem`,
@@ -71,14 +71,14 @@ Additionally, two timeouts can be specified (as a Rust duration string):
   take (including the time spent contacting the proxy) all the way until
   the last byte is sent to the client.
 
-No two `listen_on` entries may share the same address, handler and method,
+No two `listen_on` entries may share the same address, handler and protocol,
 since then the proxy would not be able to decide which one of the targets
 should be proxied.
 
 ### `connect_to`
 
 A dictionary of `address` (host / port), `handler` (HTTP path of the target
-exporter, which must be rooted at `/`) and method (`http` or `https`, default
+exporter, which must be rooted at `/`) and protocol (`http` or `https`, default
 `http`).  The methd, address and handler together are used to produce the
 final result URL to which this proxy will connect to.
 

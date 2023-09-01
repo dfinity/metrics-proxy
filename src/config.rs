@@ -16,26 +16,26 @@ use std::time::Duration;
 
 #[derive(Deserialize_enum_str, Serialize_enum_str, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum Method {
+pub enum ClientProtocol {
     Http,
     Https,
 }
-impl Default for Method {
+impl Default for ClientProtocol {
     fn default() -> Self {
-        Method::Http
+        ClientProtocol::Http
     }
 }
 
 /* FIXME: implement HTTPS */
 #[derive(Deserialize_enum_str, Serialize_enum_str, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum ServerMethod {
+pub enum ServerProtocol {
     Http,
     Https,
 }
-impl Default for ServerMethod {
+impl Default for ServerProtocol {
     fn default() -> Self {
-        ServerMethod::Http
+        ServerProtocol::Http
     }
 }
 
@@ -81,7 +81,7 @@ pub struct ConfigLabelFilter {
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "ConfigListenOnInConfigFile")]
 pub struct ConfigListenOn {
-    pub method: ServerMethod,
+    pub protocol: ServerProtocol,
     pub certificate: Option<Vec<rustls::Certificate>>,
     pub key: Option<rustls::PrivateKey>,
     pub host: IpAddr,
@@ -96,7 +96,7 @@ pub struct ConfigListenOn {
 #[derive(Debug, Deserialize)]
 struct ConfigListenOnInConfigFile {
     #[serde(default)]
-    method: ServerMethod,
+    protocol: ServerProtocol,
     certificate_file: Option<std::path::PathBuf>,
     key_file: Option<std::path::PathBuf>,
     address: String,
@@ -133,11 +133,11 @@ impl std::fmt::Display for ConfigListenOnParseError {
             ConfigListenOnParseError::CertificateFileRequired => {
                 write!(
                     f,
-                    "certificate_file is required when listen method is https"
+                    "certificate_file is required when listen protocol is https"
                 )
             }
             ConfigListenOnParseError::KeyFileRequired => {
-                write!(f, "key_file is required when listen method is https")
+                write!(f, "key_file is required when listen protocol is https")
             }
             ConfigListenOnParseError::CertificateFileReadError(e) => {
                 write!(f, "could not read certificate file: {}", e)
@@ -146,7 +146,7 @@ impl std::fmt::Display for ConfigListenOnParseError {
                 write!(f, "could not read key file: {}", e)
             }
             ConfigListenOnParseError::SSLOptionsNotAllowed => {
-                write!(f, "options certificate_file and key_file are not supported when listen method is http")
+                write!(f, "options certificate_file and key_file are not supported when listen protocol is http")
             }
         }
     }
@@ -187,8 +187,8 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
         }
         let mut certs: Option<Vec<rustls::Certificate>> = None;
         let mut key: Option<rustls::PrivateKey> = None;
-        match other.method {
-            ServerMethod::Http => {
+        match other.protocol {
+            ServerProtocol::Http => {
                 if let Some(_) = other.certificate_file {
                     return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
                 }
@@ -196,7 +196,7 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
                     return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
                 }
             }
-            ServerMethod::Https => {
+            ServerProtocol::Https => {
                 if let None = other.certificate_file {
                     return Err(ConfigListenOnParseError::CertificateFileRequired);
                 }
@@ -271,7 +271,7 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
         }
 
         Ok(ConfigListenOn {
-            method: other.method,
+            protocol: other.protocol,
             certificate: certs,
             key: key,
             host: host,
@@ -299,7 +299,7 @@ fn default_request_response_timeout() -> DurationString {
 #[derive(Debug, Deserialize, Clone)]
 pub struct ConfigConnectTo {
     #[serde(default)]
-    pub method: Method,
+    pub protocol: ClientProtocol,
     pub address: String,
     pub handler: String,
     #[serde(default = "default_timeout")]
@@ -358,12 +358,12 @@ pub fn load_config(path: PathBuf) -> Result<Config, LoadConfigError> {
         return Err(LoadConfigError::ParseError(error));
     }
     let cfg = maybecfg.unwrap();
-    struct IndexAndMethod {
+    struct IndexAndProtocol {
         index: usize,
-        method: ServerMethod,
+        protocol: ServerProtocol,
     }
     let mut by_host_port_handler = std::collections::HashMap::new();
-    let mut by_host_port: HashMap<String, IndexAndMethod> = std::collections::HashMap::new();
+    let mut by_host_port: HashMap<String, IndexAndProtocol> = std::collections::HashMap::new();
     for (index, element) in cfg.proxies.iter().enumerate() {
         let host_port = format!("{}:{}", element.listen_on.host, element.listen_on.port);
         let host_port_handler = format!(
@@ -381,10 +381,10 @@ pub fn load_config(path: PathBuf) -> Result<Config, LoadConfigError> {
             by_host_port_handler.insert(host_port_handler, index);
         }
         if let Some(prior) = by_host_port.get(&host_port) {
-            if element.listen_on.method != prior.method {
+            if element.listen_on.protocol != prior.protocol {
                 return Err(LoadConfigError::ConflictingConfig(
                     format!(
-                        "proxy {} in configuration proxies list has an HTTP method conflicting with proxy {} listening on the same host and port; the same listening address cannot serve both HTTP and HTTPS at the same time",
+                        "proxy {} in configuration proxies list uses a protocol conflicting with proxy {} listening on the same host and port; the same listening address cannot serve both HTTP and HTTPS at the same time",
                         prior.index + 1, index + 1
                     )
                 ));
@@ -392,9 +392,9 @@ pub fn load_config(path: PathBuf) -> Result<Config, LoadConfigError> {
         } else {
             by_host_port.insert(
                 host_port,
-                IndexAndMethod {
+                IndexAndProtocol {
                     index: index,
-                    method: element.listen_on.method.clone(),
+                    protocol: element.listen_on.protocol.clone(),
                 },
             );
         }
@@ -409,7 +409,7 @@ pub struct HttpProxyTarget {
 }
 #[derive(Debug, Clone)]
 pub struct HttpProxy {
-    pub method: ServerMethod,
+    pub protocol: ServerProtocol,
     pub certificate: Option<Vec<rustls::Certificate>>,
     pub key: Option<rustls::PrivateKey>,
     pub host: IpAddr,
@@ -428,7 +428,7 @@ pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
             servers.insert(
                 String::from_str(&serveraddr).unwrap(),
                 HttpProxy {
-                    method: listen_on.method,
+                    protocol: listen_on.protocol,
                     certificate: listen_on.certificate,
                     key: listen_on.key,
                     host: listen_on.host,
@@ -462,7 +462,7 @@ pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
             servers.insert(
                 String::from_str(&serveraddr).unwrap(),
                 HttpProxy {
-                    method: oldserver.method,
+                    protocol: oldserver.protocol,
                     certificate: oldserver.certificate,
                     key: oldserver.key,
                     host: oldserver.host.clone(),

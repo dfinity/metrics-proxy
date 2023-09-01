@@ -50,7 +50,7 @@ pub async fn scrape(
     c: &crate::config::ConfigConnectTo,
     h: reqwest::header::HeaderMap,
 ) -> Result<ScrapeResult, ScrapeError> {
-    let url = format!("{}://{}{}", c.method, c.address, c.handler);
+    let url = format!("{}://{}{}", c.protocol, c.address, c.handler);
     let client = reqwest::Client::new();
     let response = client
         .get(url)

@@ -52,7 +52,6 @@ pub struct Server {
 }
 
 impl Server {
-    // FIXME: handle HTTPS method in HttpProxy field.
     // FIXME: apply client request timeout starting from
     // socket accept, such that the socket is closed completely
     // when the client hangs on there without sending any data.
@@ -95,14 +94,14 @@ impl Server {
             error: ServeErrorKind::HyperError(error),
         })?;
 
-        match self.config.method {
-            config::ServerMethod::Http => {
+        match self.config.protocol {
+            config::ServerProtocol::Http => {
                 hyper::Server::builder(incoming)
                     .http1_header_read_timeout(self.config.header_read_timeout)
                     .serve(router.into_make_service())
                     .await
             }
-            config::ServerMethod::Https => {
+            config::ServerProtocol::Https => {
                 hyper::Server::builder(
                     TlsAcceptor::builder()
                         .with_single_cert(
