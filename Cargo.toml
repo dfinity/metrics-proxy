@@ -28,3 +28,4 @@ axum-server = { version = "0.5.1", features = ["tls-rustls"] }
 rustls-pemfile = "1.0.3"
 rustls = "0.21.7"
 hyper-rustls = "0.24.1"
+exitcode = "1.1.2"
