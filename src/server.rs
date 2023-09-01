@@ -1,19 +1,41 @@
-use crate::config::HttpProxy;
+use crate::config::{self, HttpProxy};
 use crate::proxy;
 use axum::extract::State;
 use axum::http;
 use axum::http::StatusCode;
 use axum::{routing::get, Router};
 use hyper;
+use hyper::server::conn::AddrIncoming;
+use hyper_rustls::TlsAcceptor;
+use rustls;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http;
 
 #[derive(Debug)]
+pub enum ServeErrorKind {
+    HyperError(hyper::Error),
+    RustlsError(rustls::Error),
+}
+
+impl fmt::Display for ServeErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                ServeErrorKind::HyperError(e) => format!("{}", e),
+                ServeErrorKind::RustlsError(ef) => format!("{}", ef),
+            }
+        )
+    }
+}
+
+#[derive(Debug)]
 pub struct ServeError {
     config: HttpProxy,
-    error: hyper::Error,
+    error: ServeErrorKind,
 }
 
 impl fmt::Display for ServeError {
@@ -68,23 +90,42 @@ impl Server {
         router = router.layer(timeouter);
 
         let addr = SocketAddr::new(self.config.host, self.config.port);
-        let maybe_bound = axum::Server::try_bind(&addr);
-        match maybe_bound {
-            Ok(bound) => match bound
+        match self.config.method {
+            config::ServerMethod::Http => {
+                axum::Server::try_bind(&addr)
+                    .map_err(|error| ServeError {
+                        config: self.config.clone(),
+                        error: ServeErrorKind::HyperError(error),
+                    })?
+                    .http1_header_read_timeout(self.config.header_read_timeout)
+                    .serve(router.into_make_service())
+                    .await
+            }
+            config::ServerMethod::Https => {
+                hyper::Server::builder(
+                    TlsAcceptor::builder()
+                        .with_single_cert(
+                            self.config.certificate.clone().unwrap(),
+                            self.config.key.clone().unwrap(),
+                        )
+                        .map_err(|error| ServeError {
+                            config: self.config.clone(),
+                            error: ServeErrorKind::RustlsError(error),
+                        })?
+                        .with_all_versions_alpn()
+                        .with_incoming(AddrIncoming::bind(&addr).map_err(|error| ServeError {
+                            config: self.config.clone(),
+                            error: ServeErrorKind::HyperError(error),
+                        })?),
+                )
                 .http1_header_read_timeout(self.config.header_read_timeout)
                 .serve(router.into_make_service())
                 .await
-            {
-                Ok(()) => Ok(()),
-                Err(error) => Err(ServeError {
-                    config: self.config.clone(),
-                    error,
-                }),
-            },
-            Err(error) => Err(ServeError {
-                config: self.config.clone(),
-                error,
-            }),
+            }
         }
+        .map_err(|error| ServeError {
+            config: self.config.clone(),
+            error: ServeErrorKind::HyperError(error),
+        })
     }
 }

@@ -8,6 +8,7 @@ use serde_enum_str::{Deserialize_enum_str, Serialize_enum_str};
 use serde_yaml::{self};
 use std::collections::HashMap;
 use std::fmt;
+use std::io::Cursor;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -30,6 +31,7 @@ impl Default for Method {
 #[serde(rename_all = "snake_case")]
 pub enum ServerMethod {
     Http,
+    Https,
 }
 impl Default for ServerMethod {
     fn default() -> Self {
@@ -80,6 +82,8 @@ pub struct ConfigLabelFilter {
 #[serde(try_from = "ConfigListenOnInConfigFile")]
 pub struct ConfigListenOn {
     pub method: ServerMethod,
+    pub certificate: Option<Vec<rustls::Certificate>>,
+    pub key: Option<rustls::PrivateKey>,
     pub host: IpAddr,
     pub port: u16,
     #[serde(default = "default_header_read_timeout")]
@@ -93,6 +97,8 @@ pub struct ConfigListenOn {
 struct ConfigListenOnInConfigFile {
     #[serde(default)]
     method: ServerMethod,
+    certificate_file: Option<std::path::PathBuf>,
+    key_file: Option<std::path::PathBuf>,
     address: String,
     handler: String,
     #[serde(default = "default_header_read_timeout")]
@@ -105,6 +111,11 @@ enum ConfigListenOnParseError {
     ParseIntError(std::num::ParseIntError),
     AddrParseError(std::net::AddrParseError),
     OutOfBoundsError(String),
+    CertificateFileRequired,
+    KeyFileRequired,
+    CertificateFileReadError(std::io::Error),
+    KeyFileReadError(std::io::Error),
+    SSLOptionsNotAllowed,
 }
 
 impl std::fmt::Display for ConfigListenOnParseError {
@@ -118,6 +129,24 @@ impl std::fmt::Display for ConfigListenOnParseError {
             }
             ConfigListenOnParseError::OutOfBoundsError(e) => {
                 write!(f, "port out of bounds: {}", e)
+            }
+            ConfigListenOnParseError::CertificateFileRequired => {
+                write!(
+                    f,
+                    "certificate_file is required when listen method is https"
+                )
+            }
+            ConfigListenOnParseError::KeyFileRequired => {
+                write!(f, "key_file is required when listen method is https")
+            }
+            ConfigListenOnParseError::CertificateFileReadError(e) => {
+                write!(f, "could not read certificate file: {}", e)
+            }
+            ConfigListenOnParseError::KeyFileReadError(e) => {
+                write!(f, "could not read key file: {}", e)
+            }
+            ConfigListenOnParseError::SSLOptionsNotAllowed => {
+                write!(f, "options certificate_file and key_file are not supported when listen method is http")
             }
         }
     }
@@ -156,8 +185,95 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
                 parts[0]
             )));
         }
+        let mut certs: Option<Vec<rustls::Certificate>> = None;
+        let mut key: Option<rustls::PrivateKey> = None;
+        match other.method {
+            ServerMethod::Http => {
+                if let Some(_) = other.certificate_file {
+                    return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
+                }
+                if let Some(_) = other.key_file {
+                    return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
+                }
+            }
+            ServerMethod::Https => {
+                if let None = other.certificate_file {
+                    return Err(ConfigListenOnParseError::CertificateFileRequired);
+                }
+                if let None = other.key_file {
+                    return Err(ConfigListenOnParseError::KeyFileRequired);
+                }
+                let certdata = std::fs::read(other.certificate_file.clone().unwrap());
+                if let Err(err) = certdata {
+                    return Err(ConfigListenOnParseError::CertificateFileReadError(err));
+                }
+                let keydata = std::fs::read(other.key_file.clone().unwrap());
+                if let Err(err) = keydata {
+                    return Err(ConfigListenOnParseError::KeyFileReadError(err));
+                }
+
+                let mut certs_cursor: Cursor<Vec<u8>> = Cursor::new(certdata.unwrap());
+                let certs_loaded = rustls_pemfile::certs(&mut certs_cursor);
+                if let Err(err) = certs_loaded {
+                    return Err(ConfigListenOnParseError::CertificateFileReadError(err));
+                }
+                let certs_parsed: Vec<rustls::Certificate> = certs_loaded
+                    .unwrap()
+                    .into_iter()
+                    .map(rustls::Certificate)
+                    .collect();
+                if certs_parsed.len() < 1 {
+                    return Err(ConfigListenOnParseError::CertificateFileReadError(
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!(
+                                "{} contains no certificates",
+                                other.certificate_file.clone().unwrap().display()
+                            ),
+                        ),
+                    ));
+                }
+
+                let mut key_cursor = Cursor::new(keydata.unwrap());
+                let mut keys_loaded: Vec<Vec<u8>> = vec![];
+
+                match rustls_pemfile::pkcs8_private_keys(&mut key_cursor) {
+                    Err(err) => return Err(ConfigListenOnParseError::KeyFileReadError(err)),
+                    Ok(res) => keys_loaded.extend(res),
+                }
+
+                match rustls_pemfile::rsa_private_keys(&mut key_cursor) {
+                    Err(err) => return Err(ConfigListenOnParseError::KeyFileReadError(err)),
+                    Ok(res) => keys_loaded.extend(res),
+                }
+
+                match rustls_pemfile::ec_private_keys(&mut key_cursor) {
+                    Err(err) => return Err(ConfigListenOnParseError::KeyFileReadError(err)),
+                    Ok(res) => keys_loaded.extend(res),
+                }
+
+                if keys_loaded.len() != 1 {
+                    return Err(ConfigListenOnParseError::KeyFileReadError(
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!(
+                                "{} contains {} keys whereas it should contain only 1",
+                                other.key_file.clone().unwrap().display(),
+                                keys_loaded.len(),
+                            ),
+                        ),
+                    ));
+                }
+
+                certs = Some(certs_parsed);
+                key = Some(rustls::PrivateKey(keys_loaded[0].clone()));
+            }
+        }
+
         Ok(ConfigListenOn {
             method: other.method,
+            certificate: certs,
+            key: key,
             host: host,
             port: port,
             handler: other.handler,
@@ -293,7 +409,9 @@ pub struct HttpProxyTarget {
 }
 #[derive(Debug, Clone)]
 pub struct HttpProxy {
-    method: ServerMethod,
+    pub method: ServerMethod,
+    pub certificate: Option<Vec<rustls::Certificate>>,
+    pub key: Option<rustls::PrivateKey>,
     pub host: IpAddr,
     pub port: u16,
     pub header_read_timeout: Duration,
@@ -311,6 +429,8 @@ pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
                 String::from_str(&serveraddr).unwrap(),
                 HttpProxy {
                     method: listen_on.method,
+                    certificate: listen_on.certificate,
+                    key: listen_on.key,
                     host: listen_on.host,
                     port: listen_on.port,
                     header_read_timeout: listen_on.header_read_timeout.into(),
@@ -343,6 +463,8 @@ pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
                 String::from_str(&serveraddr).unwrap(),
                 HttpProxy {
                     method: oldserver.method,
+                    certificate: oldserver.certificate,
+                    key: oldserver.key,
                     host: oldserver.host.clone(),
                     port: oldserver.port,
                     header_read_timeout: oldserver.header_read_timeout.clone(),

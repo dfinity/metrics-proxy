@@ -53,11 +53,12 @@ A dictionary of `address` (host / port) and `handler` (HTTP path of the
 proxy, which must be rooted at `/`).  The address and handler together
 are used to produce the final result URL on which this proxy will answer.
 
-Optionally, the `method` key can be `http` (no HTTPS support yet).
-
-No two `listen_on` entries may share the same address, handler and method,
-since then the proxy would not be able to decide which one of the targets
-should be proxied.
+Optionally, the `method` key can be `http` or `https`.  If HTTPS is
+enabled using this method, then options `key_file` and `certificate_file`
+must be paths pointing to a valid X.509 key file and certificate file
+respectively.  Test certificates can be generated with command
+`openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -days 365 -out certificate.pem`,
+taking care to add a common name to the certificate when prompted.
 
 Additionally, two timeouts can be specified (as a Rust duration string):
 
@@ -69,6 +70,10 @@ Additionally, two timeouts can be specified (as a Rust duration string):
   the `connect_to` structure) specifies how long the whole request may
   take (including the time spent contacting the proxy) all the way until
   the last byte is sent to the client.
+
+No two `listen_on` entries may share the same address, handler and method,
+since then the proxy would not be able to decide which one of the targets
+should be proxied.
 
 ### `connect_to`
 
