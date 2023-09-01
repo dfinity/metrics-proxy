@@ -330,45 +330,11 @@ impl ProxyAdapter {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{ConfigConnectTo, ConfigLabelFilter, HttpProxyTarget, Protocol};
-    use dissimilar::diff as __diff;
-    use duration_string::DurationString;
-    use std::time::Duration;
-
     use super::render_scrape_data;
-
-    pub fn format_diff(chunks: Vec<dissimilar::Chunk>) -> String {
-        let mut buf = String::new();
-        for chunk in chunks {
-            let formatted = match chunk {
-                dissimilar::Chunk::Equal(text) => text.into(),
-                dissimilar::Chunk::Delete(text) => format!("\x1b[41m{}\x1b[0m", text),
-                dissimilar::Chunk::Insert(text) => format!("\x1b[42m{}\x1b[0m", text),
-            };
-            buf.push_str(&formatted);
-        }
-        buf
-    }
-
-    macro_rules! assert_eq_text {
-        ($left:expr, $right:expr) => {
-            assert_eq_text!($left, $right,)
-        };
-        ($left:expr, $right:expr, $($tt:tt)*) => {{
-            let left = $left;
-            let right = $right;
-            if left != right {
-                if left.trim() == right.trim() {
-                    std::eprintln!("Left:\n{:?}\n\nRight:\n{:?}\n\nWhitespace difference\n", left, right);
-                } else {
-                    let diff = __diff(left, right);
-                    std::eprintln!("Left:\n{}\n\nRight:\n{}\n\nDiff:\n{}\n", left, right, format_diff(diff));
-                }
-                std::eprintln!($($tt)*);
-                panic!("text differs");
-            }
-        }};
-    }
+    use crate::config::{ConfigConnectTo, ConfigLabelFilter, HttpProxyTarget, Protocol};
+    use duration_string::DurationString;
+    use pretty_assertions::assert_eq as pretty_assert_eq;
+    use std::time::Duration;
 
     fn make_test_proxy_target(filters: Vec<ConfigLabelFilter>) -> HttpProxyTarget {
         HttpProxyTarget {
@@ -438,7 +404,7 @@ node_softnet_times_squeezed_total{cpu="9"} 0
         let exp_ = TestPayload::from_text(text);
         let filtered = adapter.apply_filters(inp_.parsed_scrape);
         let out_ = TestPayload::from_scrape(filtered);
-        assert_eq_text!(exp_.sorted_text.as_str(), out_.sorted_text.as_str());
+        pretty_assert_eq!(exp_.sorted_text.as_str(), out_.sorted_text.as_str());
     }
 
     #[test]
@@ -486,7 +452,7 @@ node_softnet_times_squeezed_total{cpu="1"} 0
         );
         let filtered = adapter.apply_filters(inp_.parsed_scrape);
         let out_ = TestPayload::from_scrape(filtered);
-        assert_eq_text!(exp_.sorted_text.as_str(), out_.sorted_text.as_str());
+        pretty_assert_eq!(exp_.sorted_text.as_str(), out_.sorted_text.as_str());
     }
 
     #[test]
@@ -514,7 +480,7 @@ node_frobnicated{cpu="0"} 0
         );
         let first_filtered = adapter.apply_filters(first_input.parsed_scrape);
         let first_output = TestPayload::from_scrape(first_filtered);
-        assert_eq_text!(
+        pretty_assert_eq!(
             first_input.sorted_text.as_str(),
             first_output.sorted_text.as_str()
         );
@@ -532,7 +498,7 @@ node_frobnicated{cpu="0"} 25
         );
         let second_output =
             TestPayload::from_scrape(adapter.apply_filters(second_input.parsed_scrape.clone()));
-        assert_eq_text!(
+        pretty_assert_eq!(
             first_input.sorted_text.as_str(),
             second_output.sorted_text.as_str()
         );
@@ -545,7 +511,7 @@ node_frobnicated{cpu="0"} 25
         // input of the prior (-> the second) round.
         let third_output =
             TestPayload::from_scrape(adapter.apply_filters(second_input.parsed_scrape.clone()));
-        assert_eq_text!(
+        pretty_assert_eq!(
             second_input.sorted_text.as_str(),
             third_output.sorted_text.as_str()
         );
