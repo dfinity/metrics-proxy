@@ -68,8 +68,7 @@ pub async fn scrape(
             data: text,
         }));
     }
-    let lines: Vec<_> = text.lines().map(|s| Ok(s.to_owned())).collect();
-    let maybe_parsed = prometheus_parse::Scrape::parse(lines.into_iter());
+    let maybe_parsed = prometheus_parse::Scrape::parse(text.lines().map(|s| Ok(s.to_owned())));
     match maybe_parsed {
         Ok(parsed) => Ok(ScrapeResult {
             headers: headers,

@@ -406,8 +406,8 @@ mod tests {
         }
 
         fn from_text(text: &str) -> Self {
-            let lines: Vec<_> = text.lines().map(|s| Ok(s.to_owned())).collect();
-            let parsed_scrape = prometheus_parse::Scrape::parse(lines.into_iter()).unwrap();
+            let parsed_scrape =
+                prometheus_parse::Scrape::parse(text.lines().map(|s| Ok(s.to_owned()))).unwrap();
             return TestPayload::from_scrape(parsed_scrape);
         }
     }
