@@ -52,11 +52,6 @@ pub struct Server {
 }
 
 impl Server {
-    // FIXME: apply client request timeout starting from
-    // socket accept, such that the socket is closed completely
-    // when the client hangs on there without sending any data.
-    // -- otherwise clients can hold HTTP connections open
-    // for no reason during extended periods of time.
     // FIXME: wholepage caching to be implemented, only
     // for valid 200 OK responses, as a layer of the method
     // router rather than at the top level app router.
