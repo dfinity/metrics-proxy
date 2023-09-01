@@ -23,7 +23,6 @@ pub enum Protocol {
     Https,
 }
 
-
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfigLabelFilterAction {
@@ -168,7 +167,9 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
             port = parts[0].parse()?
         }
         if port < 1024 {
-            return Err(ConfigListenOnParseError::OutOfBoundsError(parts[0].to_string()));
+            return Err(ConfigListenOnParseError::OutOfBoundsError(
+                parts[0].to_string(),
+            ));
         }
         let mut certs: Option<Vec<rustls::Certificate>> = None;
         let mut key: Option<rustls::PrivateKey> = None;
@@ -405,6 +406,11 @@ pub struct HttpProxy {
 }
 
 pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
+    // This function is necessary because a config may specify multiple
+    // listeners all on the same port and IP, each one with a different
+    // proxy target, but the HTTP server cannot be told to listen to
+    // the same host and port twice, so we have to group the configs
+    // by listen port + listen IP.
     let mut servers: HashMap<String, HttpProxy> = HashMap::new();
     for proxy in config.proxies {
         let listen_on = proxy.listen_on;
