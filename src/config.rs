@@ -16,26 +16,13 @@ use std::time::Duration;
 
 #[derive(Deserialize_enum_str, Serialize_enum_str, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "snake_case")]
-pub enum ClientProtocol {
+pub enum Protocol {
     Http,
     Https,
 }
-impl Default for ClientProtocol {
+impl Default for Protocol {
     fn default() -> Self {
-        ClientProtocol::Http
-    }
-}
-
-/* FIXME: implement HTTPS */
-#[derive(Deserialize_enum_str, Serialize_enum_str, Debug, PartialEq, Eq, Clone)]
-#[serde(rename_all = "snake_case")]
-pub enum ServerProtocol {
-    Http,
-    Https,
-}
-impl Default for ServerProtocol {
-    fn default() -> Self {
-        ServerProtocol::Http
+        Protocol::Http
     }
 }
 
@@ -81,7 +68,7 @@ pub struct ConfigLabelFilter {
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "ConfigListenOnInConfigFile")]
 pub struct ConfigListenOn {
-    pub protocol: ServerProtocol,
+    pub protocol: Protocol,
     pub certificate: Option<Vec<rustls::Certificate>>,
     pub key: Option<rustls::PrivateKey>,
     pub host: IpAddr,
@@ -96,7 +83,7 @@ pub struct ConfigListenOn {
 #[derive(Debug, Deserialize)]
 struct ConfigListenOnInConfigFile {
     #[serde(default)]
-    protocol: ServerProtocol,
+    protocol: Protocol,
     certificate_file: Option<std::path::PathBuf>,
     key_file: Option<std::path::PathBuf>,
     address: String,
@@ -188,7 +175,7 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
         let mut certs: Option<Vec<rustls::Certificate>> = None;
         let mut key: Option<rustls::PrivateKey> = None;
         match other.protocol {
-            ServerProtocol::Http => {
+            Protocol::Http => {
                 if let Some(_) = other.certificate_file {
                     return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
                 }
@@ -196,7 +183,7 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
                     return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
                 }
             }
-            ServerProtocol::Https => {
+            Protocol::Https => {
                 if let None = other.certificate_file {
                     return Err(ConfigListenOnParseError::CertificateFileRequired);
                 }
@@ -299,7 +286,7 @@ fn default_request_response_timeout() -> DurationString {
 #[derive(Debug, Deserialize, Clone)]
 pub struct ConfigConnectTo {
     #[serde(default)]
-    pub protocol: ClientProtocol,
+    pub protocol: Protocol,
     pub address: String,
     pub handler: String,
     #[serde(default = "default_timeout")]
@@ -360,7 +347,7 @@ pub fn load_config(path: PathBuf) -> Result<Config, LoadConfigError> {
     let cfg = maybecfg.unwrap();
     struct IndexAndProtocol {
         index: usize,
-        protocol: ServerProtocol,
+        protocol: Protocol,
     }
     let mut by_host_port_handler = std::collections::HashMap::new();
     let mut by_host_port: HashMap<String, IndexAndProtocol> = std::collections::HashMap::new();
@@ -409,7 +396,7 @@ pub struct HttpProxyTarget {
 }
 #[derive(Debug, Clone)]
 pub struct HttpProxy {
-    pub protocol: ServerProtocol,
+    pub protocol: Protocol,
     pub certificate: Option<Vec<rustls::Certificate>>,
     pub key: Option<rustls::PrivateKey>,
     pub host: IpAddr,

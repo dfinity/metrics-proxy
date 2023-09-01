@@ -95,13 +95,13 @@ impl Server {
         })?;
 
         match self.config.protocol {
-            config::ServerProtocol::Http => {
+            config::Protocol::Http => {
                 hyper::Server::builder(incoming)
                     .http1_header_read_timeout(self.config.header_read_timeout)
                     .serve(router.into_make_service())
                     .await
             }
-            config::ServerProtocol::Https => {
+            config::Protocol::Https => {
                 hyper::Server::builder(
                     TlsAcceptor::builder()
                         .with_single_cert(
