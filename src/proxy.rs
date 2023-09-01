@@ -12,7 +12,7 @@ use std::iter::zip;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-static HOPBYHOP: [&'static str; 8] = [
+static HOPBYHOP: [&str; 8] = [
     "keep-alive",
     "transfer-encoding",
     "te",
@@ -22,9 +22,9 @@ static HOPBYHOP: [&'static str; 8] = [
     "proxy-authorization",
     "proxy-authenticate",
 ];
-static STRIP_FROM_RESPONSE: [&'static str; 1] = ["content-length"];
+static STRIP_FROM_RESPONSE: [&str; 1] = ["content-length"];
 
-static PROXIED_CLIENT_HEADERS: [&'static str; 1] = ["accept"];
+static PROXIED_CLIENT_HEADERS: [&str; 1] = ["accept"];
 
 fn safely_clone_response_headers(orgheaders: header::HeaderMap) -> http::HeaderMap {
     // println!("Original: {:?}", orgheaders);
@@ -75,7 +75,7 @@ fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
                 joined.push(o);
             };
 
-            if joined.len() == 0 {
+            if joined.is_empty() {
                 "".to_string()
             } else {
                 "{".to_string() + &joined.join(",") + "}"
@@ -118,7 +118,8 @@ fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
                 .map(|h| Some(format!("quantile=\"{}\"", h.quantile)))
                 .collect::<Vec<Option<String>>>(),
         };
-        let results = zip(values, labels)
+        
+        zip(values, labels)
             .map(|(value, extra_label)| {
                 format!(
                     "{}{} {}",
@@ -127,8 +128,7 @@ fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
                     value
                 )
             })
-            .collect::<Vec<String>>();
-        results
+            .collect::<Vec<String>>()
     }
 
     fn render_response(scrape: prometheus_parse::Scrape) -> String {
@@ -190,7 +190,7 @@ pub struct ProxyAdapter {
 impl ProxyAdapter {
     pub fn new(target: HttpProxyTarget) -> Self {
         ProxyAdapter {
-            target: target,
+            target,
             cache: Arc::new(Mutex::new(SampleCache::new())), // FIXME cache
         }
     }
@@ -268,8 +268,8 @@ impl ProxyAdapter {
                 for selector in selectors.iter() {
                     let source_labels = &selector.source_labels;
                     let label_values = source_labels
-                        .into_iter()
-                        .map(|label_name| label_value(&sample.metric, &sample.labels, &label_name))
+                        .iter()
+                        .map(|label_name| label_value(&sample.metric, &sample.labels, label_name))
                         .collect::<Vec<String>>()
                         .join(selector.separator.as_str());
                     for action in &selector.actions {
@@ -299,7 +299,7 @@ impl ProxyAdapter {
 
                 // Ignore this sample if the conclusion is that we were going to drop it anyway.
                 if let Some(trulykeep) = keep {
-                    if trulykeep == false {
+                    if !trulykeep {
                         continue;
                     }
                 }
@@ -325,8 +325,8 @@ impl ProxyAdapter {
         }
 
         prometheus_parse::Scrape {
-            samples: samples,
-            docs: docs,
+            samples,
+            docs,
         }
     }
 }

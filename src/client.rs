@@ -58,20 +58,20 @@ pub async fn scrape(
         .timeout(c.timeout.into())
         .send()
         .await?;
-    let status = response.status().clone();
+    let status = response.status();
     let headers = response.headers().clone();
     let text = response.text().await?;
     if status != reqwest::StatusCode::OK {
         return Err(ScrapeError::Non200(Non200Result {
-            status: status,
-            headers: headers,
+            status,
+            headers,
             data: text,
         }));
     }
     let maybe_parsed = prometheus_parse::Scrape::parse(text.lines().map(|s| Ok(s.to_owned())));
     match maybe_parsed {
         Ok(parsed) => Ok(ScrapeResult {
-            headers: headers,
+            headers,
             series: parsed,
         }),
         Err(err) => Err(ScrapeError::ParseError(err)),

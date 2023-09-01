@@ -56,7 +56,7 @@ impl Server {
     // for valid 200 OK responses, as a layer of the method
     // router rather than at the top level app router.
     pub fn new(config: HttpProxy) -> Server {
-        Server { config: config }
+        Server { config }
     }
 
     pub async fn serve(&self) -> Result<(), ServeError> {

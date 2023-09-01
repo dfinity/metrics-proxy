@@ -16,15 +16,13 @@ use std::time::Duration;
 
 #[derive(Deserialize_enum_str, Serialize_enum_str, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum Protocol {
+    #[default]
     Http,
     Https,
 }
-impl Default for Protocol {
-    fn default() -> Self {
-        Protocol::Http
-    }
-}
+
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
@@ -42,7 +40,7 @@ where
     // Prometheus rewrite rules (which this program is inspired by)
     // do not encounter surprises like overmatching.
     let s: String = Deserialize::deserialize(deserializer)?;
-    let real = "^".to_string() + &s.to_string() + &"$".to_string();
+    let real = "^".to_string() + &s.to_string() + "$";
     match regex::Regex::new(real.as_str()) {
         Ok(regex) => Ok(regex),
         Err(err) => Err(D::Error::custom(err)),
@@ -160,37 +158,34 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
     fn try_from(other: ConfigListenOnInConfigFile) -> Result<Self, Self::Error> {
         let mut host = IpAddr::from_str("0.0.0.0")?;
         let port: u16;
-        let parts: Vec<&str> = other.address.rsplit(":").collect();
+        let parts: Vec<&str> = other.address.rsplit(':').collect();
         if parts.len() == 1 {
             port = parts[0].parse()?;
         } else {
-            if parts[1] != "" {
+            if !parts[1].is_empty() {
                 host = IpAddr::from_str(parts[1])?;
             }
             port = parts[0].parse()?
         }
         if port < 1024 {
-            return Err(ConfigListenOnParseError::OutOfBoundsError(format!(
-                "{}",
-                parts[0]
-            )));
+            return Err(ConfigListenOnParseError::OutOfBoundsError(parts[0].to_string()));
         }
         let mut certs: Option<Vec<rustls::Certificate>> = None;
         let mut key: Option<rustls::PrivateKey> = None;
         match other.protocol {
             Protocol::Http => {
-                if let Some(_) = other.certificate_file {
+                if other.certificate_file.is_some() {
                     return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
                 }
-                if let Some(_) = other.key_file {
+                if other.key_file.is_some() {
                     return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
                 }
             }
             Protocol::Https => {
-                if let None = other.certificate_file {
+                if other.certificate_file.is_none() {
                     return Err(ConfigListenOnParseError::CertificateFileRequired);
                 }
-                if let None = other.key_file {
+                if other.key_file.is_none() {
                     return Err(ConfigListenOnParseError::KeyFileRequired);
                 }
                 let certdata = std::fs::read(other.certificate_file.clone().unwrap());
@@ -212,7 +207,7 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
                     .into_iter()
                     .map(rustls::Certificate)
                     .collect();
-                if certs_parsed.len() < 1 {
+                if certs_parsed.is_empty() {
                     return Err(ConfigListenOnParseError::CertificateFileReadError(
                         std::io::Error::new(
                             std::io::ErrorKind::Other,
@@ -263,9 +258,9 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
         Ok(ConfigListenOn {
             protocol: other.protocol,
             certificate: certs,
-            key: key,
-            host: host,
-            port: port,
+            key,
+            host,
+            port,
             handler: other.handler,
             header_read_timeout: other.header_read_timeout,
             request_response_timeout: other.request_response_timeout,
@@ -383,7 +378,7 @@ pub fn load_config(path: PathBuf) -> Result<Config, LoadConfigError> {
             by_host_port.insert(
                 host_port,
                 IndexAndProtocol {
-                    index: index,
+                    index,
                     protocol: element.listen_on.protocol.clone(),
                 },
             );
@@ -455,10 +450,10 @@ pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
                     protocol: oldserver.protocol,
                     certificate: oldserver.certificate,
                     key: oldserver.key,
-                    host: oldserver.host.clone(),
+                    host: oldserver.host,
                     port: oldserver.port,
-                    header_read_timeout: oldserver.header_read_timeout.clone(),
-                    request_response_timeout: oldserver.request_response_timeout.clone(),
+                    header_read_timeout: oldserver.header_read_timeout,
+                    request_response_timeout: oldserver.request_response_timeout,
                     handlers: concathandlers,
                 },
             );

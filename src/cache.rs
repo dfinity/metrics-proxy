@@ -46,9 +46,9 @@ pub struct SampleCache {
 
 impl SampleCache {
     pub fn new() -> Self {
-        return SampleCache {
+        SampleCache {
             cache: HashMap::new(),
-        };
+        }
     }
     pub fn get(
         &self,
@@ -56,7 +56,7 @@ impl SampleCache {
         at_: Instant,
         staleness: Duration,
     ) -> Option<Sample> {
-        let key = OrderedLabelSet::new(&sample);
+        let key = OrderedLabelSet::new(sample);
         let value = self.cache.get(&key);
         match value {
             Some(v) => {
@@ -68,7 +68,7 @@ impl SampleCache {
                 return None;
             }
         }
-        return None;
+        None
     }
 
     pub fn put(&mut self, sample: prometheus_parse::Sample, at_: Instant) {
@@ -76,7 +76,7 @@ impl SampleCache {
         cache.insert(
             OrderedLabelSet::new(&sample),
             SampleCacheEntry {
-                sample: sample,
+                sample,
                 saved_at: at_,
             },
         );
