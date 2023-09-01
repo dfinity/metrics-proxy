@@ -90,13 +90,14 @@ impl Server {
         router = router.layer(timeouter);
 
         let addr = SocketAddr::new(self.config.host, self.config.port);
+        let incoming = AddrIncoming::bind(&addr).map_err(|error| ServeError {
+            config: self.config.clone(),
+            error: ServeErrorKind::HyperError(error),
+        })?;
+
         match self.config.method {
             config::ServerMethod::Http => {
-                axum::Server::try_bind(&addr)
-                    .map_err(|error| ServeError {
-                        config: self.config.clone(),
-                        error: ServeErrorKind::HyperError(error),
-                    })?
+                hyper::Server::builder(incoming)
                     .http1_header_read_timeout(self.config.header_read_timeout)
                     .serve(router.into_make_service())
                     .await
@@ -113,10 +114,7 @@ impl Server {
                             error: ServeErrorKind::RustlsError(error),
                         })?
                         .with_all_versions_alpn()
-                        .with_incoming(AddrIncoming::bind(&addr).map_err(|error| ServeError {
-                            config: self.config.clone(),
-                            error: ServeErrorKind::HyperError(error),
-                        })?),
+                        .with_incoming(incoming),
                 )
                 .http1_header_read_timeout(self.config.header_read_timeout)
                 .serve(router.into_make_service())
