@@ -246,6 +246,8 @@ impl ProxyAdapter {
                 labels.get(label_name.as_str()).unwrap().to_string()
             } else {
                 // No label with that name.  No match.
+                // This is consistent with how Prometheus metric relabeling
+                // deals with absent labels.
                 "".to_string()
             }
         }
