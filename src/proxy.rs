@@ -118,7 +118,7 @@ fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
                 .map(|h| Some(format!("quantile=\"{}\"", h.quantile)))
                 .collect::<Vec<Option<String>>>(),
         };
-        
+
         zip(values, labels)
             .map(|(value, extra_label)| {
                 format!(
@@ -184,14 +184,14 @@ fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
 #[derive(Clone)]
 pub struct ProxyAdapter {
     target: HttpProxyTarget,
-    cache: Arc<Mutex<SampleCache>>, // FIXME cache
+    cache: Arc<Mutex<SampleCache>>,
 }
 
 impl ProxyAdapter {
     pub fn new(target: HttpProxyTarget) -> Self {
         ProxyAdapter {
             target,
-            cache: Arc::new(Mutex::new(SampleCache::new())), // FIXME cache
+            cache: Arc::new(Mutex::new(SampleCache::new())),
         }
     }
 
@@ -324,10 +324,7 @@ impl ProxyAdapter {
             }
         }
 
-        prometheus_parse::Scrape {
-            samples,
-            docs,
-        }
+        prometheus_parse::Scrape { samples, docs }
     }
 }
 
