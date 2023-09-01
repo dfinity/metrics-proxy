@@ -38,6 +38,9 @@ fn anchored_regex<'de, D>(deserializer: D) -> Result<regex::Regex, D::Error>
 where
     D: Deserializer<'de>,
 {
+    // This regex is to be anchored to ensure people familiar with
+    // Prometheus rewrite rules (which this program is inspired by)
+    // do not encounter surprises like overmatching.
     let s: String = Deserialize::deserialize(deserializer)?;
     let real = "^".to_string() + &s.to_string() + &"$".to_string();
     match regex::Regex::new(real.as_str()) {
