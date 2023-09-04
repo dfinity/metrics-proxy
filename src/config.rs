@@ -299,23 +299,24 @@ impl TryFrom<ListenOn> for ListenOnInternal {
     type Error = ListenOnParseError;
 
     fn try_from(other: ListenOn) -> Result<Self, Self::Error> {
-        let mut host = "0.0.0.0".to_owned();
-        if let Some(h) = other.url.host() {
-            host = h.to_string();
-        }
-        let port: u16 = match other.url.port() {
-            Some(p) => {
-                if p < 1024 {
-                    return Err(Self::Error::PortOutOfBoundsError(p));
+        let hostport = format!(
+            "{}:{}",
+            match other.url.host() {
+                Some(h) => h.to_string(),
+                None => "0.0.0.0".to_string(),
+            },
+            match other.url.port() {
+                Some(p) => {
+                    if p < 1024 {
+                        return Err(Self::Error::PortOutOfBoundsError(p));
+                    }
+                    p
                 }
-                p
+                None => {
+                    return Err(Self::Error::PortMissing);
+                }
             }
-            None => {
-                return Err(Self::Error::PortMissing);
-            }
-        };
-
-        let hostport = format!("{host}:{port}");
+        );
         let Some(sockaddr) = hostport.to_socket_addrs()?.next() else {
             return Err(Self::Error::InvalidURL(
                 InvalidURLError::InvalidAddressError(hostport),
