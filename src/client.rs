@@ -10,7 +10,7 @@ as length which must be recomputed.
 */
 
 #[derive(Debug)]
-pub struct Non200Result {
+pub struct HttpError {
     pub status: reqwest::StatusCode,
     pub headers: header::HeaderMap,
     pub data: String,
@@ -23,7 +23,7 @@ pub struct ScrapeResult {
 
 #[derive(Debug)]
 pub enum ScrapeError {
-    Non200(Non200Result),
+    Non200(HttpError),
     FetchError(reqwest::Error),
     ParseError(std::io::Error),
 }
@@ -40,8 +40,8 @@ impl From<std::io::Error> for ScrapeError {
     }
 }
 
-impl From<Non200Result> for ScrapeError {
-    fn from(err: Non200Result) -> Self {
+impl From<HttpError> for ScrapeError {
+    fn from(err: HttpError) -> Self {
         ScrapeError::Non200(err)
     }
 }
@@ -62,7 +62,7 @@ pub async fn scrape(
     let headers = response.headers().clone();
     let text = response.text().await?;
     if status != reqwest::StatusCode::OK {
-        return Err(ScrapeError::Non200(Non200Result {
+        return Err(ScrapeError::Non200(HttpError {
             status,
             headers,
             data: text,
