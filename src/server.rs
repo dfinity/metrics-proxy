@@ -63,7 +63,7 @@ impl Server {
 
     pub async fn serve(&self) -> Result<(), ServerStartError> {
         async fn handle_with_proxy(
-            State(proxy): State<Arc<proxy::ProxyAdapter>>,
+            State(proxy): State<Arc<proxy::MetricsProxy>>,
             headers: http::HeaderMap,
         ) -> (StatusCode, http::HeaderMap, std::string::String) {
             proxy.handle(headers).await
@@ -72,7 +72,7 @@ impl Server {
         let mut router: Router<_, _> = Router::new();
 
         for (path, target) in self.config.handlers.clone().into_iter() {
-            let state = Arc::new(proxy::ProxyAdapter::from(target));
+            let state = Arc::new(proxy::MetricsProxy::from(target));
             let bodytimeout =
                 tower_http::timeout::RequestBodyTimeoutLayer::new(self.config.header_read_timeout);
             router = router.route(

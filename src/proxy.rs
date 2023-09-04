@@ -172,21 +172,24 @@ fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
 }
 
 #[derive(Clone)]
-pub struct ProxyAdapter {
+/// The metrics proxy is in charge of receiving requests relayed by the server,
+/// contacting the backend via the scraper, and finally processing the response
+/// so that it complies with the policies defined in the configuration.
+pub struct MetricsProxy {
     target: HttpProxyTarget,
     cache: Arc<Mutex<SampleCache>>,
 }
 
-impl From<HttpProxyTarget> for ProxyAdapter {
+impl From<HttpProxyTarget> for MetricsProxy {
     fn from(target: HttpProxyTarget) -> Self {
-        ProxyAdapter {
+        MetricsProxy {
             target,
             cache: Arc::new(Mutex::new(SampleCache::default())),
         }
     }
 }
 
-impl ProxyAdapter {
+impl MetricsProxy {
     pub async fn handle(&self, headers: http::HeaderMap) -> (StatusCode, http::HeaderMap, String) {
         let clientheaders = safely_clone_request_headers(headers);
         let result = client::scrape(&self.target.connect_to, clientheaders).await;
@@ -340,8 +343,8 @@ mod tests {
         }
     }
 
-    fn make_adapter_filter_tester(filters: Vec<ConfigLabelFilter>) -> crate::proxy::ProxyAdapter {
-        crate::proxy::ProxyAdapter::from(make_test_proxy_target(filters))
+    fn make_adapter_filter_tester(filters: Vec<ConfigLabelFilter>) -> crate::proxy::MetricsProxy {
+        crate::proxy::MetricsProxy::from(make_test_proxy_target(filters))
     }
 
     struct TestPayload {
