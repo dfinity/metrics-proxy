@@ -68,8 +68,7 @@ pub async fn scrape(
             data: text,
         }));
     }
-    let maybe_parsed = prometheus_parse::Scrape::parse(text.lines().map(|s| Ok(s.to_owned())));
-    match maybe_parsed {
+    match prometheus_parse::Scrape::parse(text.lines().map(|s| Ok(s.to_owned()))) {
         Ok(parsed) => Ok(ScrapeResult {
             headers,
             series: parsed,
