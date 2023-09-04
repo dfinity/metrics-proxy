@@ -4,7 +4,6 @@ use serde;
 use serde::de::Error;
 use serde::Deserialize;
 use serde::Deserializer;
-use serde_enum_str::{Deserialize_enum_str, Serialize_enum_str};
 use serde_yaml::{self};
 use std::collections::HashMap;
 use std::fmt;
@@ -15,9 +14,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use url::Url;
 
-#[derive(Deserialize_enum_str, Serialize_enum_str, Debug, PartialEq, Eq, Clone)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub enum Protocol {
     #[default]
     Http,
@@ -73,9 +70,7 @@ pub struct ConfigListenOn {
     pub certificate: Option<Vec<rustls::Certificate>>,
     pub key: Option<rustls::PrivateKey>,
     pub sockaddr: SocketAddr,
-    #[serde(default = "default_header_read_timeout")]
     pub header_read_timeout: DurationString,
-    #[serde(default = "default_request_response_timeout")]
     pub request_response_timeout: DurationString,
     pub handler: String,
 }
@@ -86,7 +81,6 @@ enum InvalidURLError {
     InvalidAddressError(String),
     UnsupportedScheme(String),
     AuthenticationUnsupported,
-    QueryStringUnsupported,
     FragmentUnsupported,
 }
 
@@ -112,14 +106,20 @@ impl std::fmt::Display for InvalidURLError {
             Self::AuthenticationUnsupported => {
                 write!(f, "authentication is currently not supported")
             }
-            Self::QueryStringUnsupported => {
-                write!(f, "query strings may not be specified")
-            }
             Self::FragmentUnsupported => {
                 write!(f, "fragments may not be specified")
             }
         }
     }
+}
+
+fn default_header_read_timeout() -> DurationString {
+    DurationString::new(Duration::new(5, 0))
+}
+
+fn default_request_response_timeout() -> DurationString {
+    let df: Duration = default_timeout().into();
+    DurationString::new(df + Duration::new(5, 0))
 }
 
 #[derive(Debug, Deserialize)]
@@ -135,8 +135,9 @@ struct ConfigListenOnInConfigFile {
 
 enum ConfigListenOnParseError {
     InvalidURL(InvalidURLError),
-    OutOfBoundsError(String),
     PortMissing,
+    PortOutOfBoundsError(String),
+    QueryStringUnsupported,
     CertificateFileRequired,
     KeyFileRequired,
     CertificateFileReadError(std::io::Error),
@@ -153,8 +154,11 @@ impl std::fmt::Display for ConfigListenOnParseError {
             Self::PortMissing => {
                 write!(f, "port missing from listen URL")
             }
-            Self::OutOfBoundsError(e) => {
+            Self::PortOutOfBoundsError(e) => {
                 write!(f, "port in listen URL out of bounds: {}", e)
+            }
+            Self::QueryStringUnsupported => {
+                write!(f, "query strings may not be specified in listen URL")
             }
             Self::CertificateFileRequired => {
                 write!(
@@ -204,38 +208,33 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
                 port = p;
             }
             None => {
-                return Err(ConfigListenOnParseError::PortMissing);
+                return Err(Self::Error::PortMissing);
             }
         }
         if port < 1024 {
-            return Err(ConfigListenOnParseError::OutOfBoundsError(format!(
-                "{}",
-                port
-            )));
+            return Err(Self::Error::PortOutOfBoundsError(format!("{}", port)));
         }
 
         let hostport = format!("{}:{}", host, port);
         let sockaddr = match hostport.to_socket_addrs()?.next() {
             Some(addr) => addr,
             None => {
-                return Err(ConfigListenOnParseError::InvalidURL(
+                return Err(Self::Error::InvalidURL(
                     InvalidURLError::InvalidAddressError(hostport),
                 ))
             }
         };
 
         if !other.url.username().is_empty() || other.url.password().is_some() {
-            return Err(ConfigListenOnParseError::InvalidURL(
+            return Err(Self::Error::InvalidURL(
                 InvalidURLError::AuthenticationUnsupported,
             ));
         }
         if other.url.query().is_some() {
-            return Err(ConfigListenOnParseError::InvalidURL(
-                InvalidURLError::QueryStringUnsupported,
-            ));
+            return Err(Self::Error::QueryStringUnsupported);
         }
         if other.url.fragment().is_some() {
-            return Err(ConfigListenOnParseError::InvalidURL(
+            return Err(Self::Error::InvalidURL(
                 InvalidURLError::FragmentUnsupported,
             ));
         }
@@ -249,32 +248,32 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
         match scheme {
             "http" => {
                 if other.certificate_file.is_some() {
-                    return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
+                    return Err(Self::Error::SSLOptionsNotAllowed);
                 }
                 if other.key_file.is_some() {
-                    return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
+                    return Err(Self::Error::SSLOptionsNotAllowed);
                 }
             }
             "https" => {
                 if other.certificate_file.is_none() {
-                    return Err(ConfigListenOnParseError::CertificateFileRequired);
+                    return Err(Self::Error::CertificateFileRequired);
                 }
                 if other.key_file.is_none() {
-                    return Err(ConfigListenOnParseError::KeyFileRequired);
+                    return Err(Self::Error::KeyFileRequired);
                 }
                 let certdata = std::fs::read(other.certificate_file.clone().unwrap());
                 if let Err(err) = certdata {
-                    return Err(ConfigListenOnParseError::CertificateFileReadError(err));
+                    return Err(Self::Error::CertificateFileReadError(err));
                 }
                 let keydata = std::fs::read(other.key_file.clone().unwrap());
                 if let Err(err) = keydata {
-                    return Err(ConfigListenOnParseError::KeyFileReadError(err));
+                    return Err(Self::Error::KeyFileReadError(err));
                 }
 
                 let mut certs_cursor: Cursor<Vec<u8>> = Cursor::new(certdata.unwrap());
                 let certs_loaded = rustls_pemfile::certs(&mut certs_cursor);
                 if let Err(err) = certs_loaded {
-                    return Err(ConfigListenOnParseError::CertificateFileReadError(err));
+                    return Err(Self::Error::CertificateFileReadError(err));
                 }
                 let certs_parsed: Vec<rustls::Certificate> = certs_loaded
                     .unwrap()
@@ -282,55 +281,51 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
                     .map(rustls::Certificate)
                     .collect();
                 if certs_parsed.is_empty() {
-                    return Err(ConfigListenOnParseError::CertificateFileReadError(
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!(
-                                "{} contains no certificates",
-                                other.certificate_file.clone().unwrap().display()
-                            ),
+                    return Err(Self::Error::CertificateFileReadError(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!(
+                            "{} contains no certificates",
+                            other.certificate_file.clone().unwrap().display()
                         ),
-                    ));
+                    )));
                 }
 
                 let mut key_cursor = Cursor::new(keydata.unwrap());
                 let mut keys_loaded: Vec<Vec<u8>> = vec![];
 
                 match rustls_pemfile::pkcs8_private_keys(&mut key_cursor) {
-                    Err(err) => return Err(ConfigListenOnParseError::KeyFileReadError(err)),
+                    Err(err) => return Err(Self::Error::KeyFileReadError(err)),
                     Ok(res) => keys_loaded.extend(res),
                 }
 
                 match rustls_pemfile::rsa_private_keys(&mut key_cursor) {
-                    Err(err) => return Err(ConfigListenOnParseError::KeyFileReadError(err)),
+                    Err(err) => return Err(Self::Error::KeyFileReadError(err)),
                     Ok(res) => keys_loaded.extend(res),
                 }
 
                 match rustls_pemfile::ec_private_keys(&mut key_cursor) {
-                    Err(err) => return Err(ConfigListenOnParseError::KeyFileReadError(err)),
+                    Err(err) => return Err(Self::Error::KeyFileReadError(err)),
                     Ok(res) => keys_loaded.extend(res),
                 }
 
                 if keys_loaded.len() != 1 {
-                    return Err(ConfigListenOnParseError::KeyFileReadError(
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!(
-                                "{} contains {} keys whereas it should contain only 1",
-                                other.key_file.clone().unwrap().display(),
-                                keys_loaded.len(),
-                            ),
+                    return Err(Self::Error::KeyFileReadError(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!(
+                            "{} contains {} keys whereas it should contain only 1",
+                            other.key_file.clone().unwrap().display(),
+                            keys_loaded.len(),
                         ),
-                    ));
+                    )));
                 }
 
                 certs = Some(certs_parsed);
                 key = Some(rustls::PrivateKey(keys_loaded[0].clone()));
             }
             _ => {
-                return Err(ConfigListenOnParseError::InvalidURL(
-                    InvalidURLError::UnsupportedScheme(scheme.to_owned()),
-                ));
+                return Err(Self::Error::InvalidURL(InvalidURLError::UnsupportedScheme(
+                    scheme.to_owned(),
+                )));
             }
         }
 
@@ -353,23 +348,64 @@ fn default_timeout() -> DurationString {
     DurationString::new(Duration::new(30, 0))
 }
 
-fn default_header_read_timeout() -> DurationString {
-    DurationString::new(Duration::new(5, 0))
-}
-
-fn default_request_response_timeout() -> DurationString {
-    let df: Duration = default_timeout().into();
-    DurationString::new(df + Duration::new(5, 0))
+#[derive(Debug, Deserialize, Clone)]
+struct ConfigConnectToInConfigFile {
+    url: Url,
+    #[serde(default = "default_timeout")]
+    timeout: DurationString,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(try_from = "ConfigConnectToInConfigFile")]
 pub struct ConfigConnectTo {
-    #[serde(default)]
-    pub protocol: Protocol,
-    pub address: String,
-    pub handler: String,
-    #[serde(default = "default_timeout")]
+    pub url: Url,
     pub timeout: DurationString,
+}
+
+enum ConfigConnectToParseError {
+    InvalidURL(InvalidURLError),
+}
+
+impl std::fmt::Display for ConfigConnectToParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::InvalidURL(e) => {
+                write!(f, "connect URL not valid: {}", e)
+            }
+        }
+    }
+}
+
+impl TryFrom<ConfigConnectToInConfigFile> for ConfigConnectTo {
+    type Error = ConfigConnectToParseError;
+
+    fn try_from(other: ConfigConnectToInConfigFile) -> Result<Self, Self::Error> {
+        if !other.url.username().is_empty() || other.url.password().is_some() {
+            return Err(Self::Error::InvalidURL(
+                InvalidURLError::AuthenticationUnsupported,
+            ));
+        }
+        if other.url.fragment().is_some() {
+            return Err(Self::Error::InvalidURL(
+                InvalidURLError::FragmentUnsupported,
+            ));
+        }
+        let scheme = other.url.scheme();
+        match scheme {
+            "http" => {}
+            "https" => {}
+            _ => {
+                return Err(Self::Error::InvalidURL(InvalidURLError::UnsupportedScheme(
+                    scheme.to_owned(),
+                )));
+            }
+        }
+
+        Ok(ConfigConnectTo {
+            url: other.url,
+            timeout: other.timeout,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -331,17 +331,15 @@ impl ProxyAdapter {
 #[cfg(test)]
 mod tests {
     use super::render_scrape_data;
-    use crate::config::{ConfigConnectTo, ConfigLabelFilter, HttpProxyTarget, Protocol};
+    use crate::config::{ConfigConnectTo, ConfigLabelFilter, HttpProxyTarget};
     use duration_string::DurationString;
     use pretty_assertions::assert_eq as pretty_assert_eq;
-    use std::time::Duration;
+    use std::{str::FromStr, time::Duration};
 
     fn make_test_proxy_target(filters: Vec<ConfigLabelFilter>) -> HttpProxyTarget {
         HttpProxyTarget {
             connect_to: ConfigConnectTo {
-                protocol: Protocol::Http,
-                address: "localhost:8080".to_string(),
-                handler: "/metrics".to_string(),
+                url: url::Url::from_str("http://localhost:8080/metrics").unwrap(),
                 timeout: DurationString::new(Duration::new(5, 0)),
             },
             label_filters: filters,

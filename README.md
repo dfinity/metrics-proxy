@@ -80,10 +80,9 @@ targets should be proxied.
 
 ### `connect_to`
 
-A dictionary of `address` (host / port), `handler` (HTTP path of the target
-exporter, which must be rooted at `/`) and protocol (`http` or `https`, default
-`http`).  The methd, address and handler together are used to produce the
-final result URL to which this proxy will connect to.
+A dictionary with one mandatory field: `url`.  The protocol of the URL
+must be one of `http` or `https`, fragments are not allowed in the
+URL, and authentication specification is not allowed.
 
 Optionally, a `timeout` can be specified (as a Rust duration string) to
 instruct the proxy on how long it should wait until the proxied exporter has

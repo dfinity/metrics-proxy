@@ -2,9 +2,7 @@ proxies:
   - listen_on:
       url: http://localhost:18080/proxy
     connect_to:
-      method: http
-      address: localhost:9100
-      handler: /metrics
+      url: http://localhost:9100/metrics
     label_filters:
       - regex: .*
         actions:
