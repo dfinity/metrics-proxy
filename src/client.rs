@@ -2,13 +2,6 @@ use prometheus_parse;
 use reqwest;
 use reqwest::header;
 
-/*
-FIXME:
-copy all headers from client request to server response
-except for the fields that have obviously changed such
-as length which must be recomputed.
-*/
-
 #[derive(Debug)]
 pub struct HttpError {
     pub status: reqwest::StatusCode,
