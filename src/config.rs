@@ -26,7 +26,7 @@ pub enum Protocol {
 pub enum ConfigLabelFilterAction {
     Keep,
     Drop,
-    Cache { duration: DurationString },
+    ReduceTimeResolution { resolution: DurationString },
 }
 
 fn anchored_regex<'de, D>(deserializer: D) -> Result<regex::Regex, D::Error>

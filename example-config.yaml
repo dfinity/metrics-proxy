@@ -9,6 +9,6 @@ proxies:
           - drop
       - regex: node_cpu_.*
         actions:
-          - cache:
-              duration: 5s
+          - reduce_time_resolution:
+              resolution: 5s
           - keep

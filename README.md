@@ -22,8 +22,8 @@ proxies:
           - drop
       - regex: node_cpu_.*
         actions:
-          - cache:
-              duration: 5s
+          - reduce_time_resolution:
+              resolution: 5s
           - keep
 ```
 
@@ -120,6 +120,7 @@ Currently, there are three action classes:
 * `drop`: this action instructs the proxy to drop a matching metric,
   and the metric will be dropped unless subsequent actions insist
   it should be `keep`ed.
-* `cache`: this action (with a mandatory `duration` parameter)
-  instructs the proxy to serve the metric from a cache unless the
-  cache entry is older than the specified duration.
+* `reduce_time_resolution`: this action (with a mandatory `resolution`
+  parameter as a duration in string form) instructs the proxy to serve
+  the metric from a cache unless the cache entry is older than the
+  specified time resolution.

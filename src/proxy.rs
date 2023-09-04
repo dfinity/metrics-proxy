@@ -272,14 +272,16 @@ impl ProxyAdapter {
                                 config::ConfigLabelFilterAction::Drop => {
                                     keep = Some(false);
                                 }
-                                config::ConfigLabelFilterAction::Cache { duration } => {
+                                config::ConfigLabelFilterAction::ReduceTimeResolution {
+                                    resolution,
+                                } => {
                                     // If the cache has not expired according to the duration,
                                     // then the cache returns the cached sample.
                                     // Else, if the cache has expired according to the duration,
                                     // then the cache returns nothing.
                                     // Below, we insert it into the cache if nothing was returned
                                     // into the cache at all.
-                                    let staleness: Duration = duration.to_owned().into();
+                                    let staleness: Duration = resolution.to_owned().into();
                                     cached_sample = cache.get(&sample, now, staleness);
                                     cache_sample = true;
                                 }
@@ -451,8 +453,8 @@ node_softnet_times_squeezed_total{cpu="1"} 0
                 r#"
 - regex: node_frobnicated
   actions:
-  - cache:
-      duration: 10ms
+  - reduce_time_resolution:
+      resolution: 10ms
 "#,
             )
             .unwrap(),
