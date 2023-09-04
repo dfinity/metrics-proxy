@@ -18,250 +18,26 @@ use url::Url;
 pub enum Protocol {
     #[default]
     Http,
-    Https,
+    Https {
+        certificate: Vec<rustls::Certificate>,
+        key: rustls::PrivateKey,
+    },
 }
 
-#[derive(Debug, Deserialize, Clone)]
-#[serde(rename_all = "snake_case")]
-/// All possible actions to apply to metrics as part of a client request.
-/// Actions in a list of actions are processed from first to last.
-pub enum ConfigLabelFilterAction {
-    /// Keep the metric.
-    Keep,
-    /// Drop the metric.
-    Drop,
-    /// Cache the metric for an amount of time.
-    ReduceTimeResolution { resolution: DurationString },
-}
-
-fn anchored_regex<'de, D>(deserializer: D) -> Result<regex::Regex, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    // This regex is to be anchored to ensure people familiar with
-    // Prometheus rewrite rules (which this program is inspired by)
-    // do not encounter surprises like overmatching.
-    let s: String = Deserialize::deserialize(deserializer)?;
-    let real = "^".to_string() + &s.to_string() + "$";
-    match regex::Regex::new(real.as_str()) {
-        Ok(regex) => Ok(regex),
-        Err(err) => Err(D::Error::custom(err)),
-    }
-}
-
-fn default_source_labels() -> Vec<String> {
-    vec!["__name__".to_string()]
-}
-
-fn default_label_separator() -> String {
-    ";".to_string()
-}
-
-#[derive(Debug, Deserialize, Clone)]
-/// Match each returned time series (to be processed) according to
-/// the listed labels, concatenated according to the separator,
-/// and matching with the specified regular expression, anchored
-/// at beginning and end.
-pub struct ConfigLabelFilter {
-    #[serde(default = "default_source_labels")]
-    pub source_labels: Vec<String>,
-    #[serde(default = "default_label_separator")]
-    pub separator: String,
-    #[serde(deserialize_with = "anchored_regex")]
-    pub regex: regex::Regex,
-    pub actions: Vec<ConfigLabelFilterAction>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(try_from = "ConfigListenOn")]
-struct ConfigListenOnInternal {
-    protocol: Protocol,
-    certificate: Option<Vec<rustls::Certificate>>,
-    key: Option<rustls::PrivateKey>,
-    sockaddr: SocketAddr,
-    header_read_timeout: DurationString,
-    request_response_timeout: DurationString,
-    handler: String,
-}
-
-enum InvalidURLError {
-    AddrParseError(std::net::AddrParseError),
-    AddrResolveError(std::io::Error),
-    InvalidAddressError(String),
-    UnsupportedScheme(String),
-    AuthenticationUnsupported,
-    FragmentUnsupported,
-}
-
-impl std::fmt::Display for InvalidURLError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::AddrParseError(e) => {
-                write!(f, "cannot parse address: {}", e)
-            }
-            Self::AddrResolveError(e) => {
-                write!(f, "cannot resolve address: {}", e)
-            }
-            Self::InvalidAddressError(e) => {
-                write!(f, "invalid address: {}", e)
-            }
-            Self::UnsupportedScheme(scheme) => {
-                write!(
-                    f,
-                    "the {} protocol is not supported by this program",
-                    scheme,
-                )
-            }
-            Self::AuthenticationUnsupported => {
-                write!(f, "authentication is currently not supported")
-            }
-            Self::FragmentUnsupported => {
-                write!(f, "fragments may not be specified")
-            }
-        }
-    }
-}
-
-fn default_header_read_timeout() -> DurationString {
-    DurationString::new(Duration::new(5, 0))
-}
-
-fn default_request_response_timeout() -> DurationString {
-    let df: Duration = default_timeout().into();
-    DurationString::new(df + Duration::new(5, 0))
-}
-
-#[derive(Debug, Deserialize)]
-/// Specifies which host and port to listen on, and on which
-/// HTTP handler (path) to respond to.
-struct ConfigListenOn {
-    url: Url,
-    certificate_file: Option<std::path::PathBuf>,
-    key_file: Option<std::path::PathBuf>,
-    #[serde(default = "default_header_read_timeout")]
-    header_read_timeout: DurationString,
-    #[serde(default = "default_request_response_timeout")]
-    request_response_timeout: DurationString,
-}
-
-enum ConfigListenOnParseError {
-    InvalidURL(InvalidURLError),
-    PortMissing,
-    PortOutOfBoundsError(u16),
-    QueryStringUnsupported,
-    CertificateFileRequired,
-    KeyFileRequired,
-    CertificateFileReadError(std::io::Error),
-    KeyFileReadError(std::io::Error),
-    SSLOptionsNotAllowed,
-}
-
-impl std::fmt::Display for ConfigListenOnParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::InvalidURL(e) => {
-                write!(f, "listen URL not valid: {}", e)
-            }
-            Self::PortMissing => {
-                write!(f, "port missing from listen URL")
-            }
-            Self::PortOutOfBoundsError(e) => {
-                write!(f, "port in listen URL out of bounds: {}", e)
-            }
-            Self::QueryStringUnsupported => {
-                write!(f, "query strings may not be specified in listen URL")
-            }
-            Self::CertificateFileRequired => {
-                write!(
-                    f,
-                    "certificate_file is required when listen protocol is https"
-                )
-            }
-            Self::KeyFileRequired => {
-                write!(f, "key_file is required when listen protocol is https")
-            }
-            Self::CertificateFileReadError(e) => {
-                write!(f, "could not read certificate file: {}", e)
-            }
-            Self::KeyFileReadError(e) => {
-                write!(f, "could not read key file: {}", e)
-            }
-            Self::SSLOptionsNotAllowed => {
-                write!(f, "options certificate_file and key_file are not supported when listen protocol is http")
-            }
-        }
-    }
-}
-
-impl From<std::net::AddrParseError> for ConfigListenOnParseError {
-    fn from(err: std::net::AddrParseError) -> Self {
-        ConfigListenOnParseError::InvalidURL(InvalidURLError::AddrParseError(err))
-    }
-}
-
-impl From<std::io::Error> for ConfigListenOnParseError {
-    fn from(err: std::io::Error) -> Self {
-        ConfigListenOnParseError::InvalidURL(InvalidURLError::AddrResolveError(err))
-    }
-}
-
-impl TryFrom<ConfigListenOn> for ConfigListenOnInternal {
-    type Error = ConfigListenOnParseError;
-
-    fn try_from(other: ConfigListenOn) -> Result<Self, Self::Error> {
-        let mut host = "0.0.0.0".to_owned();
-        if let Some(h) = other.url.host() {
-            host = h.to_string();
-        }
-        let port: u16 = match other.url.port() {
-            Some(p) => {
-                if p < 1024 {
-                    return Err(Self::Error::PortOutOfBoundsError(p));
-                }
-                p
-            }
-            None => {
-                return Err(Self::Error::PortMissing);
-            }
-        };
-
-        let hostport = format!("{}:{}", host, port);
-        let sockaddr = match hostport.to_socket_addrs()?.next() {
-            Some(addr) => addr,
-            None => {
-                return Err(Self::Error::InvalidURL(
-                    InvalidURLError::InvalidAddressError(hostport),
-                ))
-            }
-        };
-
-        if !other.url.username().is_empty() || other.url.password().is_some() {
-            return Err(Self::Error::InvalidURL(
-                InvalidURLError::AuthenticationUnsupported,
-            ));
-        }
-        if other.url.query().is_some() {
-            return Err(Self::Error::QueryStringUnsupported);
-        }
-        if other.url.fragment().is_some() {
-            return Err(Self::Error::InvalidURL(
-                InvalidURLError::FragmentUnsupported,
-            ));
-        }
-
-        let mut certs: Option<Vec<rustls::Certificate>> = None;
-        let mut key: Option<rustls::PrivateKey> = None;
+impl TryFrom<&ListenOn> for Protocol {
+    type Error = ListenOnParseError;
+    fn try_from(other: &ListenOn) -> Result<Self, Self::Error> {
         let mut scheme = other.url.scheme();
         if scheme.is_empty() {
             scheme = "http";
         }
+
         match scheme {
             "http" => {
-                if other.certificate_file.is_some() {
-                    return Err(Self::Error::SSLOptionsNotAllowed);
-                }
-                if other.key_file.is_some() {
-                    return Err(Self::Error::SSLOptionsNotAllowed);
+                if other.certificate_file.is_some() || other.key_file.is_some() {
+                    Err(Self::Error::SSLOptionsNotAllowed)
+                } else {
+                    Ok(Self::Http)
                 }
             }
             "https" => {
@@ -307,12 +83,12 @@ impl TryFrom<ConfigListenOn> for ConfigListenOnInternal {
                     Err(err) => return Err(Self::Error::KeyFileReadError(err)),
                     Ok(res) => keys_loaded.extend(res),
                 }
-
+                key_cursor.set_position(0);
                 match rustls_pemfile::rsa_private_keys(&mut key_cursor) {
                     Err(err) => return Err(Self::Error::KeyFileReadError(err)),
                     Ok(res) => keys_loaded.extend(res),
                 }
-
+                key_cursor.set_position(0);
                 match rustls_pemfile::ec_private_keys(&mut key_cursor) {
                     Err(err) => return Err(Self::Error::KeyFileReadError(err)),
                     Ok(res) => keys_loaded.extend(res),
@@ -329,23 +105,240 @@ impl TryFrom<ConfigListenOn> for ConfigListenOnInternal {
                     )));
                 }
 
-                certs = Some(certs_parsed);
-                key = Some(rustls::PrivateKey(keys_loaded[0].clone()));
+                Ok(Self::Https {
+                    certificate: certs_parsed,
+                    key: rustls::PrivateKey(keys_loaded[0].clone()),
+                })
             }
-            _ => {
-                return Err(Self::Error::InvalidURL(InvalidURLError::UnsupportedScheme(
-                    scheme.to_owned(),
-                )));
+            _ => Err(Self::Error::InvalidURL(InvalidURLError::UnsupportedScheme(
+                scheme.to_owned(),
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "snake_case")]
+/// All possible actions to apply to metrics as part of a client request.
+/// Actions in a list of actions are processed from first to last.
+pub enum LabelFilterAction {
+    /// Keep the metric.
+    Keep,
+    /// Drop the metric.
+    Drop,
+    /// Cache the metric for an amount of time.
+    ReduceTimeResolution { resolution: DurationString },
+}
+
+fn anchored_regex<'de, D>(deserializer: D) -> Result<regex::Regex, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // This regex is to be anchored to ensure people familiar with
+    // Prometheus rewrite rules (which this program is inspired by)
+    // do not encounter surprises like overmatching.
+    let s: String = Deserialize::deserialize(deserializer)?;
+    let real = "^".to_string() + &s.to_string() + "$";
+    match regex::Regex::new(real.as_str()) {
+        Ok(regex) => Ok(regex),
+        Err(err) => Err(D::Error::custom(err)),
+    }
+}
+
+fn default_source_labels() -> Vec<String> {
+    vec!["__name__".to_string()]
+}
+
+fn default_label_separator() -> String {
+    ";".to_string()
+}
+
+#[derive(Debug, Deserialize, Clone)]
+/// Match each returned time series (to be processed) according to
+/// the listed labels, concatenated according to the separator,
+/// and matching with the specified regular expression, anchored
+/// at beginning and end.
+pub struct LabelFilter {
+    #[serde(default = "default_source_labels")]
+    pub source_labels: Vec<String>,
+    #[serde(default = "default_label_separator")]
+    pub separator: String,
+    #[serde(deserialize_with = "anchored_regex")]
+    pub regex: regex::Regex,
+    pub actions: Vec<LabelFilterAction>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "ListenOn")]
+struct ListenOnInternal {
+    protocol: Protocol,
+    sockaddr: SocketAddr,
+    header_read_timeout: DurationString,
+    request_response_timeout: DurationString,
+    handler: String,
+}
+
+enum InvalidURLError {
+    AddrParseError(std::net::AddrParseError),
+    AddrResolveError(std::io::Error),
+    InvalidAddressError(String),
+    UnsupportedScheme(String),
+    AuthenticationUnsupported,
+    FragmentUnsupported,
+}
+
+impl std::fmt::Display for InvalidURLError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::AddrParseError(e) => {
+                write!(f, "cannot parse address: {e}")
+            }
+            Self::AddrResolveError(e) => {
+                write!(f, "cannot resolve address: {e}")
+            }
+            Self::InvalidAddressError(e) => {
+                write!(f, "invalid address: {e}")
+            }
+            Self::UnsupportedScheme(scheme) => {
+                write!(f, "the {scheme} protocol is not supported by this program",)
+            }
+            Self::AuthenticationUnsupported => {
+                write!(f, "authentication is currently not supported")
+            }
+            Self::FragmentUnsupported => {
+                write!(f, "fragments may not be specified")
             }
         }
+    }
+}
 
-        Ok(ConfigListenOnInternal {
-            protocol: match scheme {
-                "http" => Protocol::Http,
-                _ => Protocol::Https,
-            },
-            certificate: certs,
-            key,
+fn default_header_read_timeout() -> DurationString {
+    DurationString::new(Duration::new(5, 0))
+}
+
+fn default_request_response_timeout() -> DurationString {
+    let df: Duration = default_timeout().into();
+    DurationString::new(df + Duration::new(5, 0))
+}
+
+#[derive(Debug, Deserialize)]
+/// Specifies which host and port to listen on, and on which
+/// HTTP handler (path) to respond to.
+struct ListenOn {
+    url: Url,
+    certificate_file: Option<std::path::PathBuf>,
+    key_file: Option<std::path::PathBuf>,
+    #[serde(default = "default_header_read_timeout")]
+    header_read_timeout: DurationString,
+    #[serde(default = "default_request_response_timeout")]
+    request_response_timeout: DurationString,
+}
+
+enum ListenOnParseError {
+    InvalidURL(InvalidURLError),
+    PortMissing,
+    PortOutOfBoundsError(u16),
+    QueryStringUnsupported,
+    CertificateFileRequired,
+    KeyFileRequired,
+    CertificateFileReadError(std::io::Error),
+    KeyFileReadError(std::io::Error),
+    SSLOptionsNotAllowed,
+}
+
+impl std::fmt::Display for ListenOnParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::InvalidURL(e) => {
+                write!(f, "listen URL not valid: {e}")
+            }
+            Self::PortMissing => {
+                write!(f, "port missing from listen URL")
+            }
+            Self::PortOutOfBoundsError(e) => {
+                write!(f, "port in listen URL out of bounds: {e}")
+            }
+            Self::QueryStringUnsupported => {
+                write!(f, "query strings may not be specified in listen URL")
+            }
+            Self::CertificateFileRequired => {
+                write!(
+                    f,
+                    "certificate_file is required when listen protocol is https"
+                )
+            }
+            Self::KeyFileRequired => {
+                write!(f, "key_file is required when listen protocol is https")
+            }
+            Self::CertificateFileReadError(e) => {
+                write!(f, "could not read certificate file: {e}")
+            }
+            Self::KeyFileReadError(e) => {
+                write!(f, "could not read key file: {e}")
+            }
+            Self::SSLOptionsNotAllowed => {
+                write!(f, "options certificate_file and key_file are not supported when listen protocol is http")
+            }
+        }
+    }
+}
+
+impl From<std::net::AddrParseError> for ListenOnParseError {
+    fn from(err: std::net::AddrParseError) -> Self {
+        ListenOnParseError::InvalidURL(InvalidURLError::AddrParseError(err))
+    }
+}
+
+impl From<std::io::Error> for ListenOnParseError {
+    fn from(err: std::io::Error) -> Self {
+        ListenOnParseError::InvalidURL(InvalidURLError::AddrResolveError(err))
+    }
+}
+
+impl TryFrom<ListenOn> for ListenOnInternal {
+    type Error = ListenOnParseError;
+
+    fn try_from(other: ListenOn) -> Result<Self, Self::Error> {
+        let mut host = "0.0.0.0".to_owned();
+        if let Some(h) = other.url.host() {
+            host = h.to_string();
+        }
+        let port: u16 = match other.url.port() {
+            Some(p) => {
+                if p < 1024 {
+                    return Err(Self::Error::PortOutOfBoundsError(p));
+                }
+                p
+            }
+            None => {
+                return Err(Self::Error::PortMissing);
+            }
+        };
+
+        let hostport = format!("{host}:{port}");
+        let Some(sockaddr) = hostport.to_socket_addrs()?.next() else {
+            return Err(Self::Error::InvalidURL(
+                InvalidURLError::InvalidAddressError(hostport),
+            ));
+        };
+
+        if !other.url.username().is_empty() || other.url.password().is_some() {
+            return Err(Self::Error::InvalidURL(
+                InvalidURLError::AuthenticationUnsupported,
+            ));
+        }
+        if other.url.query().is_some() {
+            return Err(Self::Error::QueryStringUnsupported);
+        }
+        if other.url.fragment().is_some() {
+            return Err(Self::Error::InvalidURL(
+                InvalidURLError::FragmentUnsupported,
+            ));
+        }
+        let proto = Protocol::try_from(&other)?;
+
+        Ok(ListenOnInternal {
+            protocol: proto,
             sockaddr,
             handler: other.url.path().to_owned(),
             header_read_timeout: other.header_read_timeout,
@@ -361,52 +354,49 @@ fn default_timeout() -> DurationString {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(remote = "Self")]
 /// Indicates to the proxy which backend server to fetch metrics from.
-pub struct ConfigConnectTo {
+pub struct ConnectTo {
     pub url: Url,
     #[serde(default = "default_timeout")]
     pub timeout: DurationString,
 }
 
-enum ConfigConnectToParseError {
+enum ConnectToParseError {
     InvalidURL(InvalidURLError),
 }
 
-impl std::fmt::Display for ConfigConnectToParseError {
+impl std::fmt::Display for ConnectToParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::InvalidURL(e) => {
-                write!(f, "connect URL not valid: {}", e)
+                write!(f, "connect URL not valid: {e}")
             }
         }
     }
 }
 
-impl<'de> Deserialize<'de> for ConfigConnectTo {
+impl<'de> Deserialize<'de> for ConnectTo {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let other = ConfigConnectTo::deserialize(deserializer)?;
+        let other = ConnectTo::deserialize(deserializer)?;
         if !other.url.username().is_empty() || other.url.password().is_some() {
-            return Err(serde::de::Error::custom(
-                ConfigConnectToParseError::InvalidURL(InvalidURLError::AuthenticationUnsupported),
-            ));
+            return Err(serde::de::Error::custom(ConnectToParseError::InvalidURL(
+                InvalidURLError::AuthenticationUnsupported,
+            )));
         }
         if other.url.fragment().is_some() {
-            return Err(serde::de::Error::custom(
-                ConfigConnectToParseError::InvalidURL(InvalidURLError::FragmentUnsupported),
-            ));
+            return Err(serde::de::Error::custom(ConnectToParseError::InvalidURL(
+                InvalidURLError::FragmentUnsupported,
+            )));
         }
         let scheme = other.url.scheme();
         match scheme {
-            "http" => {}
-            "https" => {}
+            "http" | "https" => {}
             _ => {
-                return Err(serde::de::Error::custom(
-                    ConfigConnectToParseError::InvalidURL(InvalidURLError::UnsupportedScheme(
-                        scheme.to_owned(),
-                    )),
-                ));
+                return Err(serde::de::Error::custom(ConnectToParseError::InvalidURL(
+                    InvalidURLError::UnsupportedScheme(scheme.to_owned()),
+                )));
             }
         }
 
@@ -416,9 +406,9 @@ impl<'de> Deserialize<'de> for ConfigConnectTo {
 
 #[derive(Debug, Deserialize)]
 struct ConfigProxyEntry {
-    listen_on: ConfigListenOnInternal,
-    connect_to: ConfigConnectTo,
-    label_filters: Vec<ConfigLabelFilter>,
+    listen_on: ListenOnInternal,
+    connect_to: ConnectTo,
+    label_filters: Vec<LabelFilter>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -437,11 +427,11 @@ pub enum LoadConfigError {
 impl fmt::Display for LoadConfigError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            LoadConfigError::ReadError(e) => write!(f, "cannot read configuration: {}", e),
-            LoadConfigError::ParseError(e) => write!(f, "cannot parse configuration: {}", e),
-            LoadConfigError::ConflictingConfig(e) => write!(f, "conflicting configuration: {}", e),
+            LoadConfigError::ReadError(e) => write!(f, "cannot read configuration: {e}"),
+            LoadConfigError::ParseError(e) => write!(f, "cannot parse configuration: {e}"),
+            LoadConfigError::ConflictingConfig(e) => write!(f, "conflicting configuration: {e}"),
             LoadConfigError::InvalidActionRegex(e) => {
-                write!(f, "invalid action regular expression: {}", e)
+                write!(f, "invalid action regular expression: {e}")
             }
         }
     }
@@ -463,16 +453,16 @@ impl TryFrom<PathBuf> for Config {
     type Error = LoadConfigError;
 
     fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
+        struct IndexAndProtocol {
+            index: usize,
+            protocol: Protocol,
+        }
         let f = std::fs::File::open(path.clone())?;
         let maybecfg: Result<Config, serde_yaml::Error> = serde_yaml::from_reader(f);
         if let Err(error) = maybecfg {
             return Err(Self::Error::ParseError(error));
         }
         let cfg = maybecfg.unwrap();
-        struct IndexAndProtocol {
-            index: usize,
-            protocol: Protocol,
-        }
         let mut by_host_port_handler = std::collections::HashMap::new();
         let mut by_host_port: HashMap<String, IndexAndProtocol> = std::collections::HashMap::new();
         for (index, element) in cfg.proxies.iter().enumerate() {
@@ -488,10 +478,38 @@ impl TryFrom<PathBuf> for Config {
                         priorindex + 1, index + 1
                     )
                 ));
-            } else {
-                by_host_port_handler.insert(host_port_handler, index);
             }
+            by_host_port_handler.insert(host_port_handler, index);
+
             if let Some(prior) = by_host_port.get(&host_port) {
+                if let Protocol::Https {
+                    certificate: firstcert,
+                    key: firstkey,
+                } = element.listen_on.protocol.clone()
+                {
+                    if let Protocol::Https {
+                        certificate: secondcert,
+                        key: secondkey,
+                    } = prior.protocol.clone()
+                    {
+                        if firstcert != secondcert {
+                            return Err(Self::Error::ConflictingConfig(
+                                format!(
+                                    "proxy {} uses a different certificate from proxy {}; the same listening address must use the same certificate",
+                                    prior.index + 1, index + 1
+                                )
+                            ));
+                        }
+                        if firstkey != secondkey {
+                            return Err(Self::Error::ConflictingConfig(
+                                format!(
+                                    "proxy {} uses a different private key from proxy {}; the same listening address must use the same private key",
+                                    prior.index + 1, index + 1
+                                )
+                            ));
+                        }
+                    }
+                }
                 if element.listen_on.protocol != prior.protocol {
                     return Err(Self::Error::ConflictingConfig(
                         format!(
@@ -516,14 +534,12 @@ impl TryFrom<PathBuf> for Config {
 
 #[derive(Debug, Clone)]
 pub struct HttpProxyTarget {
-    pub connect_to: ConfigConnectTo,
-    pub label_filters: Vec<ConfigLabelFilter>,
+    pub connect_to: ConnectTo,
+    pub label_filters: Vec<LabelFilter>,
 }
 #[derive(Debug, Clone)]
 pub struct HttpProxy {
     pub protocol: Protocol,
-    pub certificate: Option<Vec<rustls::Certificate>>,
-    pub key: Option<rustls::PrivateKey>,
     pub sockaddr: SocketAddr,
     pub header_read_timeout: Duration,
     pub request_response_timeout: Duration,
@@ -546,8 +562,6 @@ impl From<Config> for Vec<HttpProxy> {
                     String::from_str(&serveraddr).unwrap(),
                     HttpProxy {
                         protocol: listen_on.protocol,
-                        certificate: listen_on.certificate,
-                        key: listen_on.key,
                         sockaddr: listen_on.sockaddr,
                         header_read_timeout: listen_on.header_read_timeout.into(),
                         request_response_timeout: listen_on.request_response_timeout.into(),
@@ -579,8 +593,6 @@ impl From<Config> for Vec<HttpProxy> {
                     String::from_str(&serveraddr).unwrap(),
                     HttpProxy {
                         protocol: oldserver.protocol,
-                        certificate: oldserver.certificate,
-                        key: oldserver.key,
                         sockaddr: oldserver.sockaddr,
                         header_read_timeout: oldserver.header_read_timeout,
                         request_response_timeout: oldserver.request_response_timeout,

@@ -1,6 +1,8 @@
 proxies:
   - listen_on:
-      url: http://localhost:18080/proxy
+      url: https://localhost:18080/proxy
+      certificate_file: certificate.pem
+      key_file: key.pem
     connect_to:
       url: http://localhost:9100/metrics
     label_filters:

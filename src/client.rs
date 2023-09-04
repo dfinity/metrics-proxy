@@ -39,8 +39,12 @@ impl From<HttpError> for ScrapeError {
     }
 }
 
+/// Scrapes a target and returns a `ScrapeResult`.
+///
+/// # Errors
+/// * `ScrapeError`
 pub async fn scrape(
-    c: &crate::config::ConfigConnectTo,
+    c: &crate::config::ConnectTo,
     h: reqwest::header::HeaderMap,
 ) -> Result<ScrapeResult, ScrapeError> {
     let url = c.url.to_string();

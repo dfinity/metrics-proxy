@@ -47,23 +47,28 @@ struct SampleCacheEntry {
 }
 
 #[derive(Default)]
-pub struct SampleCache {
+pub struct SampleCacheStore {
     cache: HashMap<OrderedLabelSet, SampleCacheEntry>,
 }
 
-impl SampleCache {
+impl SampleCacheStore {
+    #[must_use]
     pub fn get(
         &self,
         sample: &prometheus_parse::Sample,
-        at_: Instant,
+        when: Instant,
         staleness: Duration,
     ) -> Option<Sample> {
         let key = OrderedLabelSet::from(sample);
         let value = self.cache.get(&key);
         match value {
             Some(v) => {
-                if v.saved_at > at_ - staleness {
-                    Some(v.sample.clone())
+                if let Some(when_minus_staleness) = when.checked_sub(staleness) {
+                    if v.saved_at > when_minus_staleness {
+                        Some(v.sample.clone())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }

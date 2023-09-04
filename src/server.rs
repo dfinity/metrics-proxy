@@ -24,20 +24,20 @@ impl fmt::Display for ServeErrorKind {
             f,
             "{}",
             match self {
-                ServeErrorKind::HyperError(e) => format!("{}", e),
-                ServeErrorKind::RustlsError(ef) => format!("{}", ef),
+                ServeErrorKind::HyperError(e) => format!("{e}"),
+                ServeErrorKind::RustlsError(ef) => format!("{ef}"),
             }
         )
     }
 }
 
 #[derive(Debug)]
-pub struct ServerStartError {
+pub struct StartError {
     config: HttpProxy,
     error: ServeErrorKind,
 }
 
-impl fmt::Display for ServerStartError {
+impl fmt::Display for StartError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
@@ -61,9 +61,15 @@ impl Server {
     // for valid 200 OK responses, as a layer of the method
     // router rather than at the top level app router.
 
-    pub async fn serve(&self) -> Result<(), ServerStartError> {
+    /// Starts an HTTP or HTTPS server on the configured host and port,
+    /// proxying requests to each one of the targets defined in the
+    /// `handlers` of the `HttpProxy` config.
+    ///
+    /// # Errors
+    /// * `StartError` is returned if the server fails to start.
+    pub async fn serve(&self) -> Result<(), StartError> {
         async fn handle_with_proxy(
-            State(proxy): State<Arc<proxy::MetricsProxy>>,
+            State(proxy): State<Arc<proxy::MetricsProxier>>,
             headers: http::HeaderMap,
         ) -> (StatusCode, http::HeaderMap, std::string::String) {
             proxy.handle(headers).await
@@ -71,8 +77,8 @@ impl Server {
 
         let mut router: Router<_, _> = Router::new();
 
-        for (path, target) in self.config.handlers.clone().into_iter() {
-            let state = Arc::new(proxy::MetricsProxy::from(target));
+        for (path, target) in self.config.handlers.clone() {
+            let state = Arc::new(proxy::MetricsProxier::from(target));
             let bodytimeout =
                 tower_http::timeout::RequestBodyTimeoutLayer::new(self.config.header_read_timeout);
             router = router.route(
@@ -85,27 +91,23 @@ impl Server {
             tower_http::timeout::TimeoutLayer::new(self.config.request_response_timeout);
         router = router.layer(timeouter);
 
-        let incoming =
-            AddrIncoming::bind(&self.config.sockaddr).map_err(|error| ServerStartError {
-                config: self.config.clone(),
-                error: ServeErrorKind::HyperError(error),
-            })?;
+        let incoming = AddrIncoming::bind(&self.config.sockaddr).map_err(|error| StartError {
+            config: self.config.clone(),
+            error: ServeErrorKind::HyperError(error),
+        })?;
 
-        match self.config.protocol {
+        match &self.config.protocol {
             config::Protocol::Http => {
                 hyper::Server::builder(incoming)
                     .http1_header_read_timeout(self.config.header_read_timeout)
                     .serve(router.into_make_service())
                     .await
             }
-            config::Protocol::Https => {
+            config::Protocol::Https { certificate, key } => {
                 hyper::Server::builder(
                     TlsAcceptor::builder()
-                        .with_single_cert(
-                            self.config.certificate.clone().unwrap(),
-                            self.config.key.clone().unwrap(),
-                        )
-                        .map_err(|error| ServerStartError {
+                        .with_single_cert(certificate.clone(), key.clone())
+                        .map_err(|error| StartError {
                             config: self.config.clone(),
                             error: ServeErrorKind::RustlsError(error),
                         })?
@@ -117,7 +119,7 @@ impl Server {
                 .await
             }
         }
-        .map_err(|error| ServerStartError {
+        .map_err(|error| StartError {
             config: self.config.clone(),
             error: ServeErrorKind::HyperError(error),
         })

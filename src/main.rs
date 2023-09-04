@@ -1,5 +1,4 @@
 use clap::Parser;
-use tokio;
 use tokio::task::JoinSet;
 
 #[derive(Parser)]
@@ -24,7 +23,7 @@ async fn main() {
     }
     while let Some(res) = set.join_next().await {
         if let Err(error) = res.unwrap() {
-            eprintln!("HTTP server failed: {}", error);
+            eprintln!("HTTP server failed: {error}");
             std::process::exit(exitcode::OSERR);
         }
     }

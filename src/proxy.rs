@@ -1,5 +1,5 @@
 use crate::config::HttpProxyTarget;
-use crate::{cache::SampleCache, client, config};
+use crate::{cache::SampleCacheStore, client, config};
 use axum::http;
 use axum::http::StatusCode;
 use itertools::Itertools;
@@ -31,7 +31,7 @@ static PROXIED_CLIENT_HEADERS: [&str; 1] = ["accept"];
 fn safely_clone_response_headers(orgheaders: header::HeaderMap) -> http::HeaderMap {
     // println!("Original: {:?}", orgheaders);
     let mut headers = http::HeaderMap::new();
-    for (k, v) in orgheaders.into_iter() {
+    for (k, v) in orgheaders {
         if let Some(kk) = k {
             let lower = kk.to_string().to_lowercase();
             if !HOPBYHOP.contains(&lower.as_str()) && !STRIP_FROM_RESPONSE.contains(&lower.as_str())
@@ -47,7 +47,7 @@ fn safely_clone_response_headers(orgheaders: header::HeaderMap) -> http::HeaderM
 fn safely_clone_request_headers(orgheaders: http::HeaderMap) -> header::HeaderMap {
     // println!("Original: {:?}", orgheaders);
     let mut headers = header::HeaderMap::new();
-    for (k, v) in orgheaders.into_iter() {
+    for (k, v) in orgheaders {
         if let Some(kk) = k {
             if PROXIED_CLIENT_HEADERS.contains(&kk.to_string().to_lowercase().as_str()) {
                 headers.insert(kk, v);
@@ -67,7 +67,7 @@ fn fallback_headers() -> header::HeaderMap {
 fn render_labels(labels: &prometheus_parse::Labels, extra: Option<String>) -> String {
     let mut joined = labels
         .iter()
-        .map(|(n, v)| format!("{}=\"{}\"", n, v))
+        .map(|(n, v)| format!("{n}=\"{v}\""))
         .collect::<Vec<String>>();
 
     joined.sort();
@@ -76,7 +76,7 @@ fn render_labels(labels: &prometheus_parse::Labels, extra: Option<String>) -> St
     };
 
     if joined.is_empty() {
-        "".to_string()
+        String::new()
     } else {
         "{".to_string() + &joined.join(",") + "}"
     }
@@ -84,9 +84,9 @@ fn render_labels(labels: &prometheus_parse::Labels, extra: Option<String>) -> St
 
 fn render_sample(sample: &prometheus_parse::Sample) -> Vec<String> {
     let values = match &sample.value {
-        prometheus_parse::Value::Untyped(val) => vec![format!("{:e}", val)],
-        prometheus_parse::Value::Counter(val) => vec![format!("{:e}", val)],
-        prometheus_parse::Value::Gauge(val) => vec![format!("{:e}", val)],
+        prometheus_parse::Value::Untyped(val)
+        | prometheus_parse::Value::Counter(val)
+        | prometheus_parse::Value::Gauge(val) => vec![format!("{:e}", val)],
         prometheus_parse::Value::Histogram(val) => val
             .iter()
             .map(|h| format!("{:e}", h.count))
@@ -97,9 +97,9 @@ fn render_sample(sample: &prometheus_parse::Sample) -> Vec<String> {
             .collect::<Vec<String>>(),
     };
     let labels = match &sample.value {
-        prometheus_parse::Value::Untyped(_val) => vec![None],
-        prometheus_parse::Value::Counter(_val) => vec![None],
-        prometheus_parse::Value::Gauge(_val) => vec![None],
+        prometheus_parse::Value::Untyped(_val)
+        | prometheus_parse::Value::Counter(_val)
+        | prometheus_parse::Value::Gauge(_val) => vec![None],
         prometheus_parse::Value::Histogram(val) => val
             .iter()
             .map(|h| {
@@ -132,7 +132,7 @@ fn render_sample(sample: &prometheus_parse::Sample) -> Vec<String> {
         .collect::<Vec<String>>()
 }
 
-fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
+fn render_scrape_data(scrape: &prometheus_parse::Scrape) -> String {
     let mut help = scrape.docs.clone();
     let rendered = scrape
         .samples
@@ -175,21 +175,21 @@ fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
 /// The metrics proxy is in charge of receiving requests relayed by the server,
 /// contacting the backend via the scraper, and finally processing the response
 /// so that it complies with the policies defined in the configuration.
-pub struct MetricsProxy {
+pub struct MetricsProxier {
     target: HttpProxyTarget,
-    cache: Arc<Mutex<SampleCache>>,
+    cache: Arc<Mutex<SampleCacheStore>>,
 }
 
-impl From<HttpProxyTarget> for MetricsProxy {
+impl From<HttpProxyTarget> for MetricsProxier {
     fn from(target: HttpProxyTarget) -> Self {
-        MetricsProxy {
+        MetricsProxier {
             target,
-            cache: Arc::new(Mutex::new(SampleCache::default())),
+            cache: Arc::new(Mutex::new(SampleCacheStore::default())),
         }
     }
 }
 
-impl MetricsProxy {
+impl MetricsProxier {
     pub async fn handle(&self, headers: http::HeaderMap) -> (StatusCode, http::HeaderMap, String) {
         let clientheaders = safely_clone_request_headers(headers);
         let result = client::scrape(&self.target.connect_to, clientheaders).await;
@@ -203,15 +203,15 @@ impl MetricsProxy {
                 client::ScrapeError::ParseError(parseerror) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     fallback_headers(),
-                    format!("Error parsing output.\n\n{:#?}", parseerror),
+                    format!("Error parsing output.\n\n{parseerror:#?}"),
                 ),
                 client::ScrapeError::FetchError(fetcherror) => {
                     let mut statuscode = StatusCode::BAD_GATEWAY;
-                    let mut errmsg = format!("The target is down.\n\n{:#?}", fetcherror);
+                    let mut errmsg = format!("The target is down.\n\n{fetcherror:#?}");
                     if fetcherror.is_timeout() {
                         // 504 target timed out
                         statuscode = StatusCode::GATEWAY_TIMEOUT;
-                        errmsg = format!("The target is timing out.\n\n{:#?}", fetcherror);
+                        errmsg = format!("The target is timing out.\n\n{fetcherror:#?}");
                     }
                     (statuscode, fallback_headers(), errmsg)
                 }
@@ -219,17 +219,13 @@ impl MetricsProxy {
             Ok(parsed) => (
                 StatusCode::OK,
                 safely_clone_response_headers(parsed.headers),
-                render_scrape_data(self.apply_filters(parsed.series)),
+                render_scrape_data(&self.apply_filters(parsed.series)),
             ),
         }
     }
 
     // FIXME: perhaps we need a completely separate module just for filtering.
     fn apply_filters(&self, series: prometheus_parse::Scrape) -> prometheus_parse::Scrape {
-        let selectors = &self.target.label_filters;
-        let mut samples: Vec<prometheus_parse::Sample> = vec![];
-        let mut docs: HashMap<String, String> = HashMap::new();
-
         fn label_value(
             metric: &String,
             labels: &prometheus_parse::Labels,
@@ -243,14 +239,18 @@ impl MetricsProxy {
                 // No label with that name.  No match.
                 // This is consistent with how Prometheus metric relabeling
                 // deals with absent labels.
-                "".to_string()
+                String::new()
             }
         }
+
+        let selectors = &self.target.label_filters;
+        let mut samples: Vec<prometheus_parse::Sample> = vec![];
+        let mut docs: HashMap<String, String> = HashMap::new();
 
         {
             let mut cache = self.cache.lock().unwrap();
 
-            for sample in series.samples.into_iter() {
+            for sample in series.samples {
                 let mut keep: Option<bool> = None;
                 let now = std::time::Instant::now();
                 let mut cached_sample: Option<Sample> = None;
@@ -258,9 +258,9 @@ impl MetricsProxy {
                 // indicates whether the sample should be cached for
                 // future lookups.  Values are only cached when the
                 // cache is consulted and the result is a cache miss.
-                let mut cache_sample = false;
+                let mut must_cache_sample = false;
 
-                for selector in selectors.iter() {
+                for selector in selectors {
                     let source_labels = &selector.source_labels;
                     let label_values = source_labels
                         .iter()
@@ -270,24 +270,22 @@ impl MetricsProxy {
                     for action in &selector.actions {
                         if selector.regex.is_match(&label_values) {
                             match action {
-                                config::ConfigLabelFilterAction::Keep => {
+                                config::LabelFilterAction::Keep => {
                                     keep = Some(true);
                                 }
-                                config::ConfigLabelFilterAction::Drop => {
+                                config::LabelFilterAction::Drop => {
                                     keep = Some(false);
                                 }
-                                config::ConfigLabelFilterAction::ReduceTimeResolution {
-                                    resolution,
-                                } => {
+                                config::LabelFilterAction::ReduceTimeResolution { resolution } => {
                                     // If the cache has not expired according to the duration,
                                     // then the cache returns the cached sample.
                                     // Else, if the cache has expired according to the duration,
                                     // then the cache returns nothing.
                                     // Below, we insert it into the cache if nothing was returned
                                     // into the cache at all.
-                                    let staleness: Duration = resolution.to_owned().into();
+                                    let staleness: Duration = (*resolution).into();
                                     cached_sample = cache.get(&sample, now, staleness);
-                                    cache_sample = true;
+                                    must_cache_sample = true;
                                 }
                             }
                         }
@@ -304,38 +302,37 @@ impl MetricsProxy {
                 // Add this sample's metric name documentation if not yet added.
                 if !docs.contains_key(&sample.metric) && series.docs.contains_key(&sample.metric) {
                     docs.insert(
-                        sample.metric.to_owned(),
+                        sample.metric.clone(),
                         series.docs.get(&sample.metric).unwrap().clone(),
                     );
                 }
 
-                match cached_sample {
-                    Some(s) => samples.push(s),
-                    None => {
-                        if cache_sample {
-                            cache.put(sample.clone(), now);
-                        }
-                        samples.push(sample)
+                if let Some(s) = cached_sample {
+                    samples.push(s);
+                } else {
+                    if must_cache_sample {
+                        cache.put(sample.clone(), now);
                     }
+                    samples.push(sample);
                 }
             }
         }
 
-        prometheus_parse::Scrape { samples, docs }
+        prometheus_parse::Scrape { docs, samples }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::render_scrape_data;
-    use crate::config::{ConfigConnectTo, ConfigLabelFilter, HttpProxyTarget};
+    use crate::config::{ConnectTo, HttpProxyTarget, LabelFilter};
     use duration_string::DurationString;
     use pretty_assertions::assert_eq as pretty_assert_eq;
     use std::{str::FromStr, time::Duration};
 
-    fn make_test_proxy_target(filters: Vec<ConfigLabelFilter>) -> HttpProxyTarget {
+    fn make_test_proxy_target(filters: Vec<LabelFilter>) -> HttpProxyTarget {
         HttpProxyTarget {
-            connect_to: ConfigConnectTo {
+            connect_to: ConnectTo {
                 url: url::Url::from_str("http://localhost:8080/metrics").unwrap(),
                 timeout: DurationString::new(Duration::new(5, 0)),
             },
@@ -343,8 +340,8 @@ mod tests {
         }
     }
 
-    fn make_adapter_filter_tester(filters: Vec<ConfigLabelFilter>) -> crate::proxy::MetricsProxy {
-        crate::proxy::MetricsProxy::from(make_test_proxy_target(filters))
+    fn make_adapter_filter_tester(filters: Vec<LabelFilter>) -> crate::proxy::MetricsProxier {
+        crate::proxy::MetricsProxier::from(make_test_proxy_target(filters))
     }
 
     struct TestPayload {
@@ -354,7 +351,7 @@ mod tests {
 
     impl TestPayload {
         fn from_scrape(scrape: prometheus_parse::Scrape) -> Self {
-            let rendered = render_scrape_data(scrape.clone());
+            let rendered = render_scrape_data(&scrape);
             let mut sorted_rendered: Vec<String> = rendered.lines().map(|s| s.to_owned()).collect();
             sorted_rendered.sort();
             let sorted_text = sorted_rendered.join("\n");
