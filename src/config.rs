@@ -262,13 +262,10 @@ impl std::fmt::Display for ListenOnParseError {
                 write!(f, "query strings may not be specified in listen URL")
             }
             Self::CertificateFileRequired => {
-                write!(
-                    f,
-                    "certificate_file is required when listen protocol is https"
-                )
+                write!(f, "certificate_file is required for HTTPS")
             }
             Self::KeyFileRequired => {
-                write!(f, "key_file is required when listen protocol is https")
+                write!(f, "key_file is required for HTTPS https")
             }
             Self::CertificateFileReadError(e) => {
                 write!(f, "could not read certificate file: {e}")
@@ -277,7 +274,10 @@ impl std::fmt::Display for ListenOnParseError {
                 write!(f, "could not read key file: {e}")
             }
             Self::SSLOptionsNotAllowed => {
-                write!(f, "options certificate_file and key_file are not supported when listen protocol is http")
+                write!(
+                    f,
+                    "options certificate_file and key_file are not allowed when serving plain HTTP"
+                )
             }
         }
     }
@@ -417,40 +417,40 @@ pub struct Config {
 }
 
 #[derive(Debug)]
-pub enum LoadConfigError {
+pub enum LoadError {
     ReadError(std::io::Error),
     ParseError(serde_yaml::Error),
     ConflictingConfig(String),
     InvalidActionRegex(String),
 }
 
-impl fmt::Display for LoadConfigError {
+impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            LoadConfigError::ReadError(e) => write!(f, "cannot read configuration: {e}"),
-            LoadConfigError::ParseError(e) => write!(f, "cannot parse configuration: {e}"),
-            LoadConfigError::ConflictingConfig(e) => write!(f, "conflicting configuration: {e}"),
-            LoadConfigError::InvalidActionRegex(e) => {
+            LoadError::ReadError(e) => write!(f, "cannot read configuration: {e}"),
+            LoadError::ParseError(e) => write!(f, "cannot parse configuration: {e}"),
+            LoadError::ConflictingConfig(e) => write!(f, "conflicting configuration: {e}"),
+            LoadError::InvalidActionRegex(e) => {
                 write!(f, "invalid action regular expression: {e}")
             }
         }
     }
 }
 
-impl From<std::io::Error> for LoadConfigError {
+impl From<std::io::Error> for LoadError {
     fn from(err: std::io::Error) -> Self {
-        LoadConfigError::ReadError(err)
+        LoadError::ReadError(err)
     }
 }
 
-impl From<serde_yaml::Error> for LoadConfigError {
+impl From<serde_yaml::Error> for LoadError {
     fn from(err: serde_yaml::Error) -> Self {
-        LoadConfigError::ParseError(err)
+        LoadError::ParseError(err)
     }
 }
 
 impl TryFrom<PathBuf> for Config {
-    type Error = LoadConfigError;
+    type Error = LoadError;
 
     fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
         struct IndexAndProtocol {
