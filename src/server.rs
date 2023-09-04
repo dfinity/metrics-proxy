@@ -50,13 +50,16 @@ pub struct Server {
     config: HttpProxy,
 }
 
+impl From<HttpProxy> for Server {
+    fn from(config: HttpProxy) -> Server {
+        Server { config }
+    }
+}
+
 impl Server {
     // FIXME: wholepage caching to be implemented, only
     // for valid 200 OK responses, as a layer of the method
     // router rather than at the top level app router.
-    pub fn new(config: HttpProxy) -> Server {
-        Server { config }
-    }
 
     pub async fn serve(&self) -> Result<(), ServeError> {
         async fn handle_with_proxy(
@@ -69,7 +72,7 @@ impl Server {
         let mut router: Router<_, _> = Router::new();
 
         for (path, target) in self.config.handlers.clone().into_iter() {
-            let state = Arc::new(proxy::ProxyAdapter::new(target));
+            let state = Arc::new(proxy::ProxyAdapter::from(target));
             let bodytimeout =
                 tower_http::timeout::RequestBodyTimeoutLayer::new(self.config.header_read_timeout);
             router = router.route(

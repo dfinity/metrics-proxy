@@ -74,14 +74,14 @@ pub struct ConfigLabelFilter {
 
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "ConfigListenOn")]
-pub struct ConfigListenOnInternal {
-    pub protocol: Protocol,
-    pub certificate: Option<Vec<rustls::Certificate>>,
-    pub key: Option<rustls::PrivateKey>,
-    pub sockaddr: SocketAddr,
-    pub header_read_timeout: DurationString,
-    pub request_response_timeout: DurationString,
-    pub handler: String,
+struct ConfigListenOnInternal {
+    protocol: Protocol,
+    certificate: Option<Vec<rustls::Certificate>>,
+    key: Option<rustls::PrivateKey>,
+    sockaddr: SocketAddr,
+    header_read_timeout: DurationString,
+    request_response_timeout: DurationString,
+    handler: String,
 }
 
 enum InvalidURLError {

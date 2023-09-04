@@ -174,14 +174,16 @@ pub struct ProxyAdapter {
     cache: Arc<Mutex<SampleCache>>,
 }
 
-impl ProxyAdapter {
-    pub fn new(target: HttpProxyTarget) -> Self {
+impl From<HttpProxyTarget> for ProxyAdapter {
+    fn from(target: HttpProxyTarget) -> Self {
         ProxyAdapter {
             target,
             cache: Arc::new(Mutex::new(SampleCache::default())),
         }
     }
+}
 
+impl ProxyAdapter {
     pub async fn handle(&self, headers: http::HeaderMap) -> (StatusCode, http::HeaderMap, String) {
         let clientheaders = safely_clone_request_headers(headers);
         let result = client::scrape(&self.target.connect_to, clientheaders).await;
@@ -336,8 +338,7 @@ mod tests {
     }
 
     fn make_adapter_filter_tester(filters: Vec<ConfigLabelFilter>) -> crate::proxy::ProxyAdapter {
-        let target = make_test_proxy_target(filters);
-        return crate::proxy::ProxyAdapter::new(target);
+        crate::proxy::ProxyAdapter::from(make_test_proxy_target(filters))
     }
 
     struct TestPayload {

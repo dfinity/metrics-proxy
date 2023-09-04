@@ -15,8 +15,8 @@ struct LabelPair {
 struct OrderedLabelSet(Vec<LabelPair>);
 
 /// A comparable struct used to retrieve values from a cache keyed by label names.
-impl OrderedLabelSet {
-    fn new(x: &Sample) -> OrderedLabelSet {
+impl From<&Sample> for OrderedLabelSet {
+    fn from(x: &Sample) -> OrderedLabelSet {
         // We use mut here because the alternative (concat)
         // requires LabelPair to be clonable (less efficient).
         let mut labelset: Vec<LabelPair> = vec![LabelPair {
@@ -58,7 +58,7 @@ impl SampleCache {
         at_: Instant,
         staleness: Duration,
     ) -> Option<Sample> {
-        let key = OrderedLabelSet::new(sample);
+        let key = OrderedLabelSet::from(sample);
         let value = self.cache.get(&key);
         match value {
             Some(v) => {
@@ -76,7 +76,7 @@ impl SampleCache {
     pub fn put(&mut self, sample: prometheus_parse::Sample, at_: Instant) {
         let cache = &mut self.cache;
         cache.insert(
-            OrderedLabelSet::new(&sample),
+            OrderedLabelSet::from(&sample),
             SampleCacheEntry {
                 sample,
                 saved_at: at_,

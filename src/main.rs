@@ -19,7 +19,7 @@ async fn main() {
     let mut set = JoinSet::new();
     let proxylist: Vec<metrics_proxy::config::HttpProxy> = maybecfg.unwrap().into();
     for proxy in proxylist {
-        let server = metrics_proxy::server::Server::new(proxy);
+        let server = metrics_proxy::server::Server::from(proxy);
         set.spawn(async move { server.serve().await });
     }
     while let Some(res) = set.join_next().await {
