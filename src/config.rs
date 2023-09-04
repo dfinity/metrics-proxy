@@ -9,10 +9,11 @@ use serde_yaml::{self};
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Cursor;
-use std::net::IpAddr;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
+use url::Url;
 
 #[derive(Deserialize_enum_str, Serialize_enum_str, Debug, PartialEq, Eq, Clone)]
 #[serde(rename_all = "snake_case")]
@@ -71,8 +72,7 @@ pub struct ConfigListenOn {
     pub protocol: Protocol,
     pub certificate: Option<Vec<rustls::Certificate>>,
     pub key: Option<rustls::PrivateKey>,
-    pub host: IpAddr,
-    pub port: u16,
+    pub sockaddr: SocketAddr,
     #[serde(default = "default_header_read_timeout")]
     pub header_read_timeout: DurationString,
     #[serde(default = "default_request_response_timeout")]
@@ -80,14 +80,53 @@ pub struct ConfigListenOn {
     pub handler: String,
 }
 
+enum InvalidURLError {
+    AddrParseError(std::net::AddrParseError),
+    AddrResolveError(std::io::Error),
+    InvalidAddressError(String),
+    UnsupportedScheme(String),
+    AuthenticationUnsupported,
+    QueryStringUnsupported,
+    FragmentUnsupported,
+}
+
+impl std::fmt::Display for InvalidURLError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::AddrParseError(e) => {
+                write!(f, "cannot parse address: {}", e)
+            }
+            Self::AddrResolveError(e) => {
+                write!(f, "cannot resolve address: {}", e)
+            }
+            Self::InvalidAddressError(e) => {
+                write!(f, "invalid address: {}", e)
+            }
+            Self::UnsupportedScheme(scheme) => {
+                write!(
+                    f,
+                    "the {} protocol is not supported by this program",
+                    scheme,
+                )
+            }
+            Self::AuthenticationUnsupported => {
+                write!(f, "authentication is currently not supported")
+            }
+            Self::QueryStringUnsupported => {
+                write!(f, "query strings may not be specified")
+            }
+            Self::FragmentUnsupported => {
+                write!(f, "fragments may not be specified")
+            }
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ConfigListenOnInConfigFile {
-    #[serde(default)]
-    protocol: Protocol,
+    url: Url,
     certificate_file: Option<std::path::PathBuf>,
     key_file: Option<std::path::PathBuf>,
-    address: String,
-    handler: String,
     #[serde(default = "default_header_read_timeout")]
     header_read_timeout: DurationString,
     #[serde(default = "default_request_response_timeout")]
@@ -95,9 +134,9 @@ struct ConfigListenOnInConfigFile {
 }
 
 enum ConfigListenOnParseError {
-    ParseIntError(std::num::ParseIntError),
-    AddrParseError(std::net::AddrParseError),
+    InvalidURL(InvalidURLError),
     OutOfBoundsError(String),
+    PortMissing,
     CertificateFileRequired,
     KeyFileRequired,
     CertificateFileReadError(std::io::Error),
@@ -108,46 +147,46 @@ enum ConfigListenOnParseError {
 impl std::fmt::Display for ConfigListenOnParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ConfigListenOnParseError::ParseIntError(e) => {
-                write!(f, "port not an integer: {}", e)
+            Self::InvalidURL(e) => {
+                write!(f, "listen URL not valid: {}", e)
             }
-            ConfigListenOnParseError::AddrParseError(e) => {
-                write!(f, "invalid listen address: {}", e)
+            Self::PortMissing => {
+                write!(f, "port missing from listen URL")
             }
-            ConfigListenOnParseError::OutOfBoundsError(e) => {
-                write!(f, "port out of bounds: {}", e)
+            Self::OutOfBoundsError(e) => {
+                write!(f, "port in listen URL out of bounds: {}", e)
             }
-            ConfigListenOnParseError::CertificateFileRequired => {
+            Self::CertificateFileRequired => {
                 write!(
                     f,
                     "certificate_file is required when listen protocol is https"
                 )
             }
-            ConfigListenOnParseError::KeyFileRequired => {
+            Self::KeyFileRequired => {
                 write!(f, "key_file is required when listen protocol is https")
             }
-            ConfigListenOnParseError::CertificateFileReadError(e) => {
+            Self::CertificateFileReadError(e) => {
                 write!(f, "could not read certificate file: {}", e)
             }
-            ConfigListenOnParseError::KeyFileReadError(e) => {
+            Self::KeyFileReadError(e) => {
                 write!(f, "could not read key file: {}", e)
             }
-            ConfigListenOnParseError::SSLOptionsNotAllowed => {
+            Self::SSLOptionsNotAllowed => {
                 write!(f, "options certificate_file and key_file are not supported when listen protocol is http")
             }
         }
     }
 }
 
-impl From<std::num::ParseIntError> for ConfigListenOnParseError {
-    fn from(err: std::num::ParseIntError) -> Self {
-        ConfigListenOnParseError::ParseIntError(err)
+impl From<std::net::AddrParseError> for ConfigListenOnParseError {
+    fn from(err: std::net::AddrParseError) -> Self {
+        ConfigListenOnParseError::InvalidURL(InvalidURLError::AddrParseError(err))
     }
 }
 
-impl From<std::net::AddrParseError> for ConfigListenOnParseError {
-    fn from(err: std::net::AddrParseError) -> Self {
-        ConfigListenOnParseError::AddrParseError(err)
+impl From<std::io::Error> for ConfigListenOnParseError {
+    fn from(err: std::io::Error) -> Self {
+        ConfigListenOnParseError::InvalidURL(InvalidURLError::AddrResolveError(err))
     }
 }
 
@@ -155,26 +194,60 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
     type Error = ConfigListenOnParseError;
 
     fn try_from(other: ConfigListenOnInConfigFile) -> Result<Self, Self::Error> {
-        let mut host = IpAddr::from_str("0.0.0.0")?;
+        let mut host = "0.0.0.0".to_owned();
+        if let Some(h) = other.url.host() {
+            host = h.to_string();
+        }
         let port: u16;
-        let parts: Vec<&str> = other.address.rsplit(':').collect();
-        if parts.len() == 1 {
-            port = parts[0].parse()?;
-        } else {
-            if !parts[1].is_empty() {
-                host = IpAddr::from_str(parts[1])?;
+        match other.url.port() {
+            Some(p) => {
+                port = p;
             }
-            port = parts[0].parse()?
+            None => {
+                return Err(ConfigListenOnParseError::PortMissing);
+            }
         }
         if port < 1024 {
-            return Err(ConfigListenOnParseError::OutOfBoundsError(
-                parts[0].to_string(),
+            return Err(ConfigListenOnParseError::OutOfBoundsError(format!(
+                "{}",
+                port
+            )));
+        }
+
+        let hostport = format!("{}:{}", host, port);
+        let sockaddr = match hostport.to_socket_addrs()?.next() {
+            Some(addr) => addr,
+            None => {
+                return Err(ConfigListenOnParseError::InvalidURL(
+                    InvalidURLError::InvalidAddressError(hostport),
+                ))
+            }
+        };
+
+        if !other.url.username().is_empty() || other.url.password().is_some() {
+            return Err(ConfigListenOnParseError::InvalidURL(
+                InvalidURLError::AuthenticationUnsupported,
             ));
         }
+        if other.url.query().is_some() {
+            return Err(ConfigListenOnParseError::InvalidURL(
+                InvalidURLError::QueryStringUnsupported,
+            ));
+        }
+        if other.url.fragment().is_some() {
+            return Err(ConfigListenOnParseError::InvalidURL(
+                InvalidURLError::FragmentUnsupported,
+            ));
+        }
+
         let mut certs: Option<Vec<rustls::Certificate>> = None;
         let mut key: Option<rustls::PrivateKey> = None;
-        match other.protocol {
-            Protocol::Http => {
+        let mut scheme = other.url.scheme();
+        if scheme.is_empty() {
+            scheme = "http";
+        }
+        match scheme {
+            "http" => {
                 if other.certificate_file.is_some() {
                     return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
                 }
@@ -182,7 +255,7 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
                     return Err(ConfigListenOnParseError::SSLOptionsNotAllowed);
                 }
             }
-            Protocol::Https => {
+            "https" => {
                 if other.certificate_file.is_none() {
                     return Err(ConfigListenOnParseError::CertificateFileRequired);
                 }
@@ -254,15 +327,22 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
                 certs = Some(certs_parsed);
                 key = Some(rustls::PrivateKey(keys_loaded[0].clone()));
             }
+            _ => {
+                return Err(ConfigListenOnParseError::InvalidURL(
+                    InvalidURLError::UnsupportedScheme(scheme.to_owned()),
+                ));
+            }
         }
 
         Ok(ConfigListenOn {
-            protocol: other.protocol,
+            protocol: match scheme {
+                "http" => Protocol::Http,
+                _ => Protocol::Https,
+            },
             certificate: certs,
             key,
-            host,
-            port,
-            handler: other.handler,
+            sockaddr,
+            handler: other.url.path().to_owned(),
             header_read_timeout: other.header_read_timeout,
             request_response_timeout: other.request_response_timeout,
         })
@@ -351,10 +431,10 @@ pub fn load_config(path: PathBuf) -> Result<Config, LoadConfigError> {
     let mut by_host_port_handler = std::collections::HashMap::new();
     let mut by_host_port: HashMap<String, IndexAndProtocol> = std::collections::HashMap::new();
     for (index, element) in cfg.proxies.iter().enumerate() {
-        let host_port = format!("{}:{}", element.listen_on.host, element.listen_on.port);
+        let host_port = format!("{}", element.listen_on.sockaddr);
         let host_port_handler = format!(
-            "{}:{}/{}",
-            element.listen_on.host, element.listen_on.port, element.listen_on.handler
+            "{}/{}",
+            element.listen_on.sockaddr, element.listen_on.handler
         );
         if let Some(priorindex) = by_host_port_handler.get(&host_port_handler) {
             return Err(LoadConfigError::ConflictingConfig(
@@ -398,8 +478,7 @@ pub struct HttpProxy {
     pub protocol: Protocol,
     pub certificate: Option<Vec<rustls::Certificate>>,
     pub key: Option<rustls::PrivateKey>,
-    pub host: IpAddr,
-    pub port: u16,
+    pub sockaddr: SocketAddr,
     pub header_read_timeout: Duration,
     pub request_response_timeout: Duration,
     pub handlers: HashMap<String, HttpProxyTarget>,
@@ -414,7 +493,7 @@ pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
     let mut servers: HashMap<String, HttpProxy> = HashMap::new();
     for proxy in config.proxies {
         let listen_on = proxy.listen_on;
-        let serveraddr = format!("{}:{}", listen_on.host, listen_on.port);
+        let serveraddr = format!("{}", listen_on.sockaddr);
         if !servers.contains_key(&serveraddr) {
             servers.insert(
                 String::from_str(&serveraddr).unwrap(),
@@ -422,8 +501,7 @@ pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
                     protocol: listen_on.protocol,
                     certificate: listen_on.certificate,
                     key: listen_on.key,
-                    host: listen_on.host,
-                    port: listen_on.port,
+                    sockaddr: listen_on.sockaddr,
                     header_read_timeout: listen_on.header_read_timeout.into(),
                     request_response_timeout: listen_on.request_response_timeout.into(),
                     handlers: HashMap::new(),
@@ -456,8 +534,7 @@ pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
                     protocol: oldserver.protocol,
                     certificate: oldserver.certificate,
                     key: oldserver.key,
-                    host: oldserver.host,
-                    port: oldserver.port,
+                    sockaddr: oldserver.sockaddr,
                     header_read_timeout: oldserver.header_read_timeout,
                     request_response_timeout: oldserver.request_response_timeout,
                     handlers: concathandlers,

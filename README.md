@@ -13,8 +13,7 @@ argument, and the configuration file follows this format:
 ```
 proxies:
   - listen_on:
-      address: 0.0.0.0:18080
-      handler: /metrics
+      url: http://0.0.0.0:18080
     connect_to:
       protocol: http
       address: localhost:9100
@@ -49,14 +48,18 @@ A dictionary that contains three key / value pairs:
 
 ### `listen_on`
 
-A dictionary of `address` (host / port) and `handler` (HTTP path of the
-proxy, which must be rooted at `/`).  The address and handler together
-are used to produce the final result URL on which this proxy will answer.
+A dictionary that requires only one key: `url`.  Fragments and query
+strings in the URL are not supported, and the only schemes supported
+are `http` and `https`.  The URL represents the address to which
+this specific proxy server will respond to.  Both IP addresses and
+host names are supported, but any host name that does not resolve to
+an address the system is listening on will later cause an error while
+attempting to listen to that address.  The port in the URL is required.
 
-Optionally, the `protocol` key can be `http` or `https`.  If HTTPS is
-enabled using this setting, then options `key_file` and `certificate_file`
-must be paths pointing to a valid X.509 key file and certificate file
-respectively.  Test certificates can be generated with command
+If HTTPS is enabled in the URL, then options `key_file` and
+`certificate_file` must be paths pointing to a valid X.509 key file and
+certificate file respectively.  Test certificates can be generated with
+command
 `openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -days 365 -out certificate.pem`,
 taking care to add a common name to the certificate when prompted.
 
@@ -71,9 +74,9 @@ Additionally, two timeouts can be specified (as a Rust duration string):
   take (including the time spent contacting the proxy) all the way until
   the last byte is sent to the client.
 
-No two `listen_on` entries may share the same address, handler and protocol,
-since then the proxy would not be able to decide which one of the targets
-should be proxied.
+No two `listen_on` entries may share the same host, port, handler path and
+protocol, since then the proxy would not be able to decide which one of the
+targets should be proxied.
 
 ### `connect_to`
 

@@ -1,7 +1,6 @@
 proxies:
   - listen_on:
-      address: 0.0.0.0:18080
-      handler: /metrics
+      url: http://localhost:18080/proxy
     connect_to:
       method: http
       address: localhost:9100

@@ -30,3 +30,4 @@ rustls = "0.21.7"
 hyper-rustls = "0.24.1"
 exitcode = "1.1.2"
 pretty_assertions = "1.4.0"
+url = { version = "2.4.1", features = ["serde"] }

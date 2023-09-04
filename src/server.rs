@@ -9,7 +9,6 @@ use hyper::server::conn::AddrIncoming;
 use hyper_rustls::TlsAcceptor;
 use rustls;
 use std::fmt;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http;
 
@@ -42,8 +41,8 @@ impl fmt::Display for ServeError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "cannot listen on host {} port {}: {}",
-            self.config.host, self.config.port, self.error
+            "cannot listen on {}: {}",
+            self.config.sockaddr, self.error
         )
     }
 }
@@ -83,8 +82,7 @@ impl Server {
             tower_http::timeout::TimeoutLayer::new(self.config.request_response_timeout);
         router = router.layer(timeouter);
 
-        let addr = SocketAddr::new(self.config.host, self.config.port);
-        let incoming = AddrIncoming::bind(&addr).map_err(|error| ServeError {
+        let incoming = AddrIncoming::bind(&self.config.sockaddr).map_err(|error| ServeError {
             config: self.config.clone(),
             error: ServeErrorKind::HyperError(error),
         })?;
