@@ -23,9 +23,14 @@ pub enum Protocol {
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
+/// All possible actions to apply to metrics as part of a client request.
+/// Actions in a list of actions are processed from first to last.
 pub enum ConfigLabelFilterAction {
+    /// Keep the metric.
     Keep,
+    /// Drop the metric.
     Drop,
+    /// Cache the metric for an amount of time.
     ReduceTimeResolution { resolution: DurationString },
 }
 
@@ -53,6 +58,10 @@ fn default_label_separator() -> String {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+/// Match each returned time series (to be processed) according to
+/// the listed labels, concatenated according to the separator,
+/// and matching with the specified regular expression, anchored
+/// at beginning and end.
 pub struct ConfigLabelFilter {
     #[serde(default = "default_source_labels")]
     pub source_labels: Vec<String>,
@@ -64,8 +73,8 @@ pub struct ConfigLabelFilter {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(try_from = "ConfigListenOnInConfigFile")]
-pub struct ConfigListenOn {
+#[serde(try_from = "ConfigListenOn")]
+pub struct ConfigListenOnInternal {
     pub protocol: Protocol,
     pub certificate: Option<Vec<rustls::Certificate>>,
     pub key: Option<rustls::PrivateKey>,
@@ -123,7 +132,9 @@ fn default_request_response_timeout() -> DurationString {
 }
 
 #[derive(Debug, Deserialize)]
-struct ConfigListenOnInConfigFile {
+/// Specifies which host and port to listen on, and on which
+/// HTTP handler (path) to respond to.
+struct ConfigListenOn {
     url: Url,
     certificate_file: Option<std::path::PathBuf>,
     key_file: Option<std::path::PathBuf>,
@@ -194,10 +205,10 @@ impl From<std::io::Error> for ConfigListenOnParseError {
     }
 }
 
-impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
+impl TryFrom<ConfigListenOn> for ConfigListenOnInternal {
     type Error = ConfigListenOnParseError;
 
-    fn try_from(other: ConfigListenOnInConfigFile) -> Result<Self, Self::Error> {
+    fn try_from(other: ConfigListenOn) -> Result<Self, Self::Error> {
         let mut host = "0.0.0.0".to_owned();
         if let Some(h) = other.url.host() {
             host = h.to_string();
@@ -328,7 +339,7 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
             }
         }
 
-        Ok(ConfigListenOn {
+        Ok(ConfigListenOnInternal {
             protocol: match scheme {
                 "http" => Protocol::Http,
                 _ => Protocol::Https,
@@ -348,16 +359,11 @@ fn default_timeout() -> DurationString {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-struct ConfigConnectToInConfigFile {
-    url: Url,
-    #[serde(default = "default_timeout")]
-    timeout: DurationString,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-#[serde(try_from = "ConfigConnectToInConfigFile")]
+#[serde(remote = "Self")]
+/// Indicates to the proxy which backend server to fetch metrics from.
 pub struct ConfigConnectTo {
     pub url: Url,
+    #[serde(default = "default_timeout")]
     pub timeout: DurationString,
 }
 
@@ -375,18 +381,20 @@ impl std::fmt::Display for ConfigConnectToParseError {
     }
 }
 
-impl TryFrom<ConfigConnectToInConfigFile> for ConfigConnectTo {
-    type Error = ConfigConnectToParseError;
-
-    fn try_from(other: ConfigConnectToInConfigFile) -> Result<Self, Self::Error> {
+impl<'de> Deserialize<'de> for ConfigConnectTo {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let other = ConfigConnectTo::deserialize(deserializer)?;
         if !other.url.username().is_empty() || other.url.password().is_some() {
-            return Err(Self::Error::InvalidURL(
-                InvalidURLError::AuthenticationUnsupported,
+            return Err(serde::de::Error::custom(
+                ConfigConnectToParseError::InvalidURL(InvalidURLError::AuthenticationUnsupported),
             ));
         }
         if other.url.fragment().is_some() {
-            return Err(Self::Error::InvalidURL(
-                InvalidURLError::FragmentUnsupported,
+            return Err(serde::de::Error::custom(
+                ConfigConnectToParseError::InvalidURL(InvalidURLError::FragmentUnsupported),
             ));
         }
         let scheme = other.url.scheme();
@@ -394,29 +402,28 @@ impl TryFrom<ConfigConnectToInConfigFile> for ConfigConnectTo {
             "http" => {}
             "https" => {}
             _ => {
-                return Err(Self::Error::InvalidURL(InvalidURLError::UnsupportedScheme(
-                    scheme.to_owned(),
-                )));
+                return Err(serde::de::Error::custom(
+                    ConfigConnectToParseError::InvalidURL(InvalidURLError::UnsupportedScheme(
+                        scheme.to_owned(),
+                    )),
+                ));
             }
         }
 
-        Ok(ConfigConnectTo {
-            url: other.url,
-            timeout: other.timeout,
-        })
+        Ok(other)
     }
 }
 
 #[derive(Debug, Deserialize)]
-pub struct ConfigProxyEntry {
-    pub listen_on: ConfigListenOn,
-    pub connect_to: ConfigConnectTo,
-    pub label_filters: Vec<ConfigLabelFilter>,
+struct ConfigProxyEntry {
+    listen_on: ConfigListenOnInternal,
+    connect_to: ConfigConnectTo,
+    label_filters: Vec<ConfigLabelFilter>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    pub proxies: Vec<ConfigProxyEntry>,
+    proxies: Vec<ConfigProxyEntry>,
 }
 
 #[derive(Debug)]
@@ -452,55 +459,59 @@ impl From<serde_yaml::Error> for LoadConfigError {
     }
 }
 
-pub fn load_config(path: PathBuf) -> Result<Config, LoadConfigError> {
-    let f = std::fs::File::open(path.clone())?;
-    let maybecfg: Result<Config, serde_yaml::Error> = serde_yaml::from_reader(f);
-    if let Err(error) = maybecfg {
-        return Err(LoadConfigError::ParseError(error));
-    }
-    let cfg = maybecfg.unwrap();
-    struct IndexAndProtocol {
-        index: usize,
-        protocol: Protocol,
-    }
-    let mut by_host_port_handler = std::collections::HashMap::new();
-    let mut by_host_port: HashMap<String, IndexAndProtocol> = std::collections::HashMap::new();
-    for (index, element) in cfg.proxies.iter().enumerate() {
-        let host_port = format!("{}", element.listen_on.sockaddr);
-        let host_port_handler = format!(
-            "{}/{}",
-            element.listen_on.sockaddr, element.listen_on.handler
-        );
-        if let Some(priorindex) = by_host_port_handler.get(&host_port_handler) {
-            return Err(LoadConfigError::ConflictingConfig(
-                format!(
-                    "proxy {} in configuration proxies list contains the same host, port and handler as proxy {}; two proxies cannot listen on the same HTTP handler simultaneously",
-                    priorindex + 1, index + 1
-                )
-            ));
-        } else {
-            by_host_port_handler.insert(host_port_handler, index);
+impl TryFrom<PathBuf> for Config {
+    type Error = LoadConfigError;
+
+    fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
+        let f = std::fs::File::open(path.clone())?;
+        let maybecfg: Result<Config, serde_yaml::Error> = serde_yaml::from_reader(f);
+        if let Err(error) = maybecfg {
+            return Err(Self::Error::ParseError(error));
         }
-        if let Some(prior) = by_host_port.get(&host_port) {
-            if element.listen_on.protocol != prior.protocol {
-                return Err(LoadConfigError::ConflictingConfig(
+        let cfg = maybecfg.unwrap();
+        struct IndexAndProtocol {
+            index: usize,
+            protocol: Protocol,
+        }
+        let mut by_host_port_handler = std::collections::HashMap::new();
+        let mut by_host_port: HashMap<String, IndexAndProtocol> = std::collections::HashMap::new();
+        for (index, element) in cfg.proxies.iter().enumerate() {
+            let host_port = format!("{}", element.listen_on.sockaddr);
+            let host_port_handler = format!(
+                "{}/{}",
+                element.listen_on.sockaddr, element.listen_on.handler
+            );
+            if let Some(priorindex) = by_host_port_handler.get(&host_port_handler) {
+                return Err(Self::Error::ConflictingConfig(
                     format!(
-                        "proxy {} in configuration proxies list uses a protocol conflicting with proxy {} listening on the same host and port; the same listening address cannot serve both HTTP and HTTPS at the same time",
-                        prior.index + 1, index + 1
+                        "proxy {} in configuration proxies list contains the same host, port and handler as proxy {}; two proxies cannot listen on the same HTTP handler simultaneously",
+                        priorindex + 1, index + 1
                     )
                 ));
+            } else {
+                by_host_port_handler.insert(host_port_handler, index);
             }
-        } else {
-            by_host_port.insert(
-                host_port,
-                IndexAndProtocol {
-                    index,
-                    protocol: element.listen_on.protocol.clone(),
-                },
-            );
+            if let Some(prior) = by_host_port.get(&host_port) {
+                if element.listen_on.protocol != prior.protocol {
+                    return Err(Self::Error::ConflictingConfig(
+                        format!(
+                            "proxy {} in configuration proxies list uses a protocol conflicting with proxy {} listening on the same host and port; the same listening address cannot serve both HTTP and HTTPS at the same time",
+                            prior.index + 1, index + 1
+                        )
+                    ));
+                }
+            } else {
+                by_host_port.insert(
+                    host_port,
+                    IndexAndProtocol {
+                        index,
+                        protocol: element.listen_on.protocol.clone(),
+                    },
+                );
+            }
         }
+        Ok(cfg)
     }
-    Ok(cfg)
 }
 
 #[derive(Debug, Clone)]
@@ -519,63 +530,65 @@ pub struct HttpProxy {
     pub handlers: HashMap<String, HttpProxyTarget>,
 }
 
-pub fn convert_config_to_proxy_list(config: Config) -> Vec<HttpProxy> {
-    // This function is necessary because a config may specify multiple
-    // listeners all on the same port and IP, each one with a different
-    // proxy target, but the HTTP server cannot be told to listen to
-    // the same host and port twice, so we have to group the configs
-    // by listen port + listen IP.
-    let mut servers: HashMap<String, HttpProxy> = HashMap::new();
-    for proxy in config.proxies {
-        let listen_on = proxy.listen_on;
-        let serveraddr = format!("{}", listen_on.sockaddr);
-        if !servers.contains_key(&serveraddr) {
-            servers.insert(
-                String::from_str(&serveraddr).unwrap(),
-                HttpProxy {
-                    protocol: listen_on.protocol,
-                    certificate: listen_on.certificate,
-                    key: listen_on.key,
-                    sockaddr: listen_on.sockaddr,
-                    header_read_timeout: listen_on.header_read_timeout.into(),
-                    request_response_timeout: listen_on.request_response_timeout.into(),
-                    handlers: HashMap::new(),
-                },
-            );
-        }
-        if !servers
-            .get(&serveraddr)
-            .unwrap()
-            .handlers
-            .contains_key(&listen_on.handler)
-        {
-            let newhandlers = HashMap::from([(
-                listen_on.handler.clone(),
-                HttpProxyTarget {
-                    connect_to: proxy.connect_to,
-                    label_filters: proxy.label_filters,
-                },
-            )]);
-            let oldserver = servers.remove(&serveraddr).unwrap();
-            let concathandlers = oldserver
+impl From<Config> for Vec<HttpProxy> {
+    fn from(val: Config) -> Self {
+        // This function is necessary because a config may specify multiple
+        // listeners all on the same port and IP, each one with a different
+        // proxy target, but the HTTP server cannot be told to listen to
+        // the same host and port twice, so we have to group the configs
+        // by listen port + listen IP.
+        let mut servers: HashMap<String, HttpProxy> = HashMap::new();
+        for proxy in val.proxies {
+            let listen_on = proxy.listen_on;
+            let serveraddr = format!("{}", listen_on.sockaddr);
+            if !servers.contains_key(&serveraddr) {
+                servers.insert(
+                    String::from_str(&serveraddr).unwrap(),
+                    HttpProxy {
+                        protocol: listen_on.protocol,
+                        certificate: listen_on.certificate,
+                        key: listen_on.key,
+                        sockaddr: listen_on.sockaddr,
+                        header_read_timeout: listen_on.header_read_timeout.into(),
+                        request_response_timeout: listen_on.request_response_timeout.into(),
+                        handlers: HashMap::new(),
+                    },
+                );
+            }
+            if !servers
+                .get(&serveraddr)
+                .unwrap()
                 .handlers
-                .clone()
-                .into_iter()
-                .chain(newhandlers)
-                .collect();
-            servers.insert(
-                String::from_str(&serveraddr).unwrap(),
-                HttpProxy {
-                    protocol: oldserver.protocol,
-                    certificate: oldserver.certificate,
-                    key: oldserver.key,
-                    sockaddr: oldserver.sockaddr,
-                    header_read_timeout: oldserver.header_read_timeout,
-                    request_response_timeout: oldserver.request_response_timeout,
-                    handlers: concathandlers,
-                },
-            );
+                .contains_key(&listen_on.handler)
+            {
+                let newhandlers = HashMap::from([(
+                    listen_on.handler.clone(),
+                    HttpProxyTarget {
+                        connect_to: proxy.connect_to,
+                        label_filters: proxy.label_filters,
+                    },
+                )]);
+                let oldserver = servers.remove(&serveraddr).unwrap();
+                let concathandlers = oldserver
+                    .handlers
+                    .clone()
+                    .into_iter()
+                    .chain(newhandlers)
+                    .collect();
+                servers.insert(
+                    String::from_str(&serveraddr).unwrap(),
+                    HttpProxy {
+                        protocol: oldserver.protocol,
+                        certificate: oldserver.certificate,
+                        key: oldserver.key,
+                        sockaddr: oldserver.sockaddr,
+                        header_read_timeout: oldserver.header_read_timeout,
+                        request_response_timeout: oldserver.request_response_timeout,
+                        handlers: concathandlers,
+                    },
+                );
+            }
         }
+        servers.values().cloned().collect()
     }
-    servers.values().cloned().collect()
 }
