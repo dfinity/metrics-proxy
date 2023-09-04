@@ -46,16 +46,12 @@ struct SampleCacheEntry {
     saved_at: Instant,
 }
 
+#[derive(Default)]
 pub struct SampleCache {
     cache: HashMap<OrderedLabelSet, SampleCacheEntry>,
 }
 
 impl SampleCache {
-    pub fn new() -> Self {
-        SampleCache {
-            cache: HashMap::new(),
-        }
-    }
     pub fn get(
         &self,
         sample: &prometheus_parse::Sample,

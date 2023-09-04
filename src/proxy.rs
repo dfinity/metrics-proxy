@@ -5,7 +5,6 @@ use axum::http::StatusCode;
 use itertools::Itertools;
 use prometheus_parse::{self, Sample};
 use reqwest::header;
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::f64;
 use std::iter::zip;
@@ -136,15 +135,7 @@ fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
         let rendered = scrape
             .samples
             .iter()
-            .sorted_by(|sample1, sample2| {
-                if sample1.metric > sample2.metric {
-                    Ordering::Greater
-                } else if sample1.metric < sample2.metric {
-                    Ordering::Less
-                } else {
-                    Ordering::Equal
-                }
-            })
+            .sorted_by(|sample1, sample2| sample1.metric.cmp(&sample2.metric))
             .map(|sample| {
                 (
                     &sample.metric,
@@ -191,7 +182,7 @@ impl ProxyAdapter {
     pub fn new(target: HttpProxyTarget) -> Self {
         ProxyAdapter {
             target,
-            cache: Arc::new(Mutex::new(SampleCache::new())),
+            cache: Arc::new(Mutex::new(SampleCache::default())),
         }
     }
 

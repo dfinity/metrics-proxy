@@ -136,7 +136,7 @@ struct ConfigListenOnInConfigFile {
 enum ConfigListenOnParseError {
     InvalidURL(InvalidURLError),
     PortMissing,
-    PortOutOfBoundsError(String),
+    PortOutOfBoundsError(u16),
     QueryStringUnsupported,
     CertificateFileRequired,
     KeyFileRequired,
@@ -202,18 +202,17 @@ impl TryFrom<ConfigListenOnInConfigFile> for ConfigListenOn {
         if let Some(h) = other.url.host() {
             host = h.to_string();
         }
-        let port: u16;
-        match other.url.port() {
+        let port: u16 = match other.url.port() {
             Some(p) => {
-                port = p;
+                if p < 1024 {
+                    return Err(Self::Error::PortOutOfBoundsError(p));
+                }
+                p
             }
             None => {
                 return Err(Self::Error::PortMissing);
             }
-        }
-        if port < 1024 {
-            return Err(Self::Error::PortOutOfBoundsError(format!("{}", port)));
-        }
+        };
 
         let hostport = format!("{}:{}", host, port);
         let sockaddr = match hostport.to_socket_addrs()?.next() {
