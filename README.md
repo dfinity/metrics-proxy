@@ -35,6 +35,7 @@ The meaning of each structure in the configuration file is explained below.
 ### `proxies`
 
 A top-level list of dictionaries, each of which must contain a `proxy` object.
+Multiple proxies are natively supported.
 
 ### `proxy`
 
@@ -43,6 +44,9 @@ A dictionary that contains three key / value pairs:
 * `listen_on`
 * `connect_to`
 * `label_filters`
+
+The proxy object determines where to listen on, where to fetch metrics from,
+and how the fetched metrics will be post-processed by the proxy.
 
 ### `listen_on`
 
