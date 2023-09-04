@@ -11,6 +11,7 @@ use std::iter::zip;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+// Headers that must not be relayed from backend to client or vice versa.
 static HOPBYHOP: [&str; 8] = [
     "keep-alive",
     "transfer-encoding",
@@ -21,8 +22,10 @@ static HOPBYHOP: [&str; 8] = [
     "proxy-authorization",
     "proxy-authenticate",
 ];
+// Headers that must be stripped from response of backend.
 static STRIP_FROM_RESPONSE: [&str; 1] = ["content-length"];
 
+// Headers that may be relayed from client to backend.
 static PROXIED_CLIENT_HEADERS: [&str; 1] = ["accept"];
 
 fn safely_clone_response_headers(orgheaders: header::HeaderMap) -> http::HeaderMap {
