@@ -61,115 +61,111 @@ fn fallback_headers() -> header::HeaderMap {
     fallback_headers
 }
 
-fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
-    fn render_sample(sample: &prometheus_parse::Sample) -> Vec<String> {
-        fn render_labels(labels: &prometheus_parse::Labels, extra: Option<String>) -> String {
-            let mut joined = labels
-                .iter()
-                .map(|(n, v)| format!("{}=\"{}\"", n, v))
-                .collect::<Vec<String>>();
+fn render_labels(labels: &prometheus_parse::Labels, extra: Option<String>) -> String {
+    let mut joined = labels
+        .iter()
+        .map(|(n, v)| format!("{}=\"{}\"", n, v))
+        .collect::<Vec<String>>();
 
-            joined.sort();
-            if let Some(o) = extra {
-                joined.push(o);
-            };
+    joined.sort();
+    if let Some(o) = extra {
+        joined.push(o);
+    };
 
-            if joined.is_empty() {
-                "".to_string()
-            } else {
-                "{".to_string() + &joined.join(",") + "}"
-            }
-        }
-
-        let values = match &sample.value {
-            prometheus_parse::Value::Untyped(val) => vec![format!("{:e}", val)],
-            prometheus_parse::Value::Counter(val) => vec![format!("{:e}", val)],
-            prometheus_parse::Value::Gauge(val) => vec![format!("{:e}", val)],
-            prometheus_parse::Value::Histogram(val) => val
-                .iter()
-                .map(|h| format!("{:e}", h.count))
-                .collect::<Vec<String>>(),
-            prometheus_parse::Value::Summary(val) => val
-                .iter()
-                .map(|h| format!("{:e}", h.count))
-                .collect::<Vec<String>>(),
-        };
-        let labels = match &sample.value {
-            prometheus_parse::Value::Untyped(_val) => vec![None],
-            prometheus_parse::Value::Counter(_val) => vec![None],
-            prometheus_parse::Value::Gauge(_val) => vec![None],
-            prometheus_parse::Value::Histogram(val) => val
-                .iter()
-                .map(|h| {
-                    Some(format!("le=\"{}\"", {
-                        if h.less_than == f64::INFINITY {
-                            "+Inf".to_string()
-                        } else if h.less_than == f64::NEG_INFINITY {
-                            "-Inf".to_string()
-                        } else {
-                            format!("{}", h.less_than)
-                        }
-                    }))
-                })
-                .collect::<Vec<Option<String>>>(),
-            prometheus_parse::Value::Summary(val) => val
-                .iter()
-                .map(|h| Some(format!("quantile=\"{}\"", h.quantile)))
-                .collect::<Vec<Option<String>>>(),
-        };
-
-        zip(values, labels)
-            .map(|(value, extra_label)| {
-                format!(
-                    "{}{} {}",
-                    sample.metric,
-                    render_labels(&sample.labels, extra_label),
-                    value
-                )
-            })
-            .collect::<Vec<String>>()
+    if joined.is_empty() {
+        "".to_string()
+    } else {
+        "{".to_string() + &joined.join(",") + "}"
     }
+}
 
-    fn render_response(scrape: prometheus_parse::Scrape) -> String {
-        let mut help = scrape.docs.clone();
-        let rendered = scrape
-            .samples
+fn render_sample(sample: &prometheus_parse::Sample) -> Vec<String> {
+    let values = match &sample.value {
+        prometheus_parse::Value::Untyped(val) => vec![format!("{:e}", val)],
+        prometheus_parse::Value::Counter(val) => vec![format!("{:e}", val)],
+        prometheus_parse::Value::Gauge(val) => vec![format!("{:e}", val)],
+        prometheus_parse::Value::Histogram(val) => val
             .iter()
-            .sorted_by(|sample1, sample2| sample1.metric.cmp(&sample2.metric))
-            .map(|sample| {
-                (
-                    &sample.metric,
-                    &sample.value,
-                    render_sample(sample).join("\n"),
-                )
+            .map(|h| format!("{:e}", h.count))
+            .collect::<Vec<String>>(),
+        prometheus_parse::Value::Summary(val) => val
+            .iter()
+            .map(|h| format!("{:e}", h.count))
+            .collect::<Vec<String>>(),
+    };
+    let labels = match &sample.value {
+        prometheus_parse::Value::Untyped(_val) => vec![None],
+        prometheus_parse::Value::Counter(_val) => vec![None],
+        prometheus_parse::Value::Gauge(_val) => vec![None],
+        prometheus_parse::Value::Histogram(val) => val
+            .iter()
+            .map(|h| {
+                Some(format!("le=\"{}\"", {
+                    if h.less_than == f64::INFINITY {
+                        "+Inf".to_string()
+                    } else if h.less_than == f64::NEG_INFINITY {
+                        "-Inf".to_string()
+                    } else {
+                        format!("{}", h.less_than)
+                    }
+                }))
             })
-            .map(|(metric, value, rendered)| {
-                if let Some(h) = help.remove(metric) {
-                    format!(
-                        "# HELP {} {}\n# TYPE {} {}\n{}",
-                        metric,
-                        h,
-                        metric,
-                        match value {
-                            prometheus_parse::Value::Untyped(_) => "untyped",
-                            prometheus_parse::Value::Counter(_) => "counter",
-                            prometheus_parse::Value::Gauge(_) => "gauge",
-                            prometheus_parse::Value::Histogram(_) => "histogram",
-                            prometheus_parse::Value::Summary(_) => "summary",
-                        },
-                        rendered
-                    )
-                } else {
-                    rendered
-                }
-            })
-            .collect::<Vec<String>>()
-            .join("\n")
-            + "\n";
-        rendered
-    }
+            .collect::<Vec<Option<String>>>(),
+        prometheus_parse::Value::Summary(val) => val
+            .iter()
+            .map(|h| Some(format!("quantile=\"{}\"", h.quantile)))
+            .collect::<Vec<Option<String>>>(),
+    };
 
-    render_response(scrape)
+    zip(values, labels)
+        .map(|(value, extra_label)| {
+            format!(
+                "{}{} {}",
+                sample.metric,
+                render_labels(&sample.labels, extra_label),
+                value
+            )
+        })
+        .collect::<Vec<String>>()
+}
+
+fn render_scrape_data(scrape: prometheus_parse::Scrape) -> String {
+    let mut help = scrape.docs.clone();
+    let rendered = scrape
+        .samples
+        .iter()
+        .sorted_by(|sample1, sample2| sample1.metric.cmp(&sample2.metric))
+        .map(|sample| {
+            (
+                &sample.metric,
+                &sample.value,
+                render_sample(sample).join("\n"),
+            )
+        })
+        .map(|(metric, value, rendered)| {
+            if let Some(h) = help.remove(metric) {
+                format!(
+                    "# HELP {} {}\n# TYPE {} {}\n{}",
+                    metric,
+                    h,
+                    metric,
+                    match value {
+                        prometheus_parse::Value::Untyped(_) => "untyped",
+                        prometheus_parse::Value::Counter(_) => "counter",
+                        prometheus_parse::Value::Gauge(_) => "gauge",
+                        prometheus_parse::Value::Histogram(_) => "histogram",
+                        prometheus_parse::Value::Summary(_) => "summary",
+                    },
+                    rendered
+                )
+            } else {
+                rendered
+            }
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
+        + "\n";
+    rendered
 }
 
 #[derive(Clone)]
