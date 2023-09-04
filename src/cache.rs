@@ -63,14 +63,13 @@ impl SampleCache {
         match value {
             Some(v) => {
                 if v.saved_at > at_ - staleness {
-                    return Some(v.sample.clone());
+                    Some(v.sample.clone())
+                } else {
+                    None
                 }
             }
-            _ => {
-                return None;
-            }
+            _ => None,
         }
-        None
     }
 
     pub fn put(&mut self, sample: prometheus_parse::Sample, at_: Instant) {
