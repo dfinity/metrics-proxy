@@ -32,12 +32,12 @@ impl fmt::Display for ServeErrorKind {
 }
 
 #[derive(Debug)]
-pub struct ServeError {
+pub struct ServerStartError {
     config: HttpProxy,
     error: ServeErrorKind,
 }
 
-impl fmt::Display for ServeError {
+impl fmt::Display for ServerStartError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
@@ -61,7 +61,7 @@ impl Server {
     // for valid 200 OK responses, as a layer of the method
     // router rather than at the top level app router.
 
-    pub async fn serve(&self) -> Result<(), ServeError> {
+    pub async fn serve(&self) -> Result<(), ServerStartError> {
         async fn handle_with_proxy(
             State(proxy): State<Arc<proxy::ProxyAdapter>>,
             headers: http::HeaderMap,
@@ -85,10 +85,11 @@ impl Server {
             tower_http::timeout::TimeoutLayer::new(self.config.request_response_timeout);
         router = router.layer(timeouter);
 
-        let incoming = AddrIncoming::bind(&self.config.sockaddr).map_err(|error| ServeError {
-            config: self.config.clone(),
-            error: ServeErrorKind::HyperError(error),
-        })?;
+        let incoming =
+            AddrIncoming::bind(&self.config.sockaddr).map_err(|error| ServerStartError {
+                config: self.config.clone(),
+                error: ServeErrorKind::HyperError(error),
+            })?;
 
         match self.config.protocol {
             config::Protocol::Http => {
@@ -104,7 +105,7 @@ impl Server {
                             self.config.certificate.clone().unwrap(),
                             self.config.key.clone().unwrap(),
                         )
-                        .map_err(|error| ServeError {
+                        .map_err(|error| ServerStartError {
                             config: self.config.clone(),
                             error: ServeErrorKind::RustlsError(error),
                         })?
@@ -116,7 +117,7 @@ impl Server {
                 .await
             }
         }
-        .map_err(|error| ServeError {
+        .map_err(|error| ServerStartError {
             config: self.config.clone(),
             error: ServeErrorKind::HyperError(error),
         })
