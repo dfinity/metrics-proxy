@@ -14,24 +14,30 @@ struct LabelPair {
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct OrderedLabelSet(Vec<LabelPair>);
 
+/// A comparable struct used to retrieve values from a cache keyed by label names.
 impl OrderedLabelSet {
     fn new(x: &Sample) -> OrderedLabelSet {
-        let mut labelset: Vec<LabelPair> = vec![];
-        labelset.push(LabelPair {
+        // We use mut here because the alternative (concat)
+        // requires LabelPair to be clonable (less efficient).
+        let mut labelset: Vec<LabelPair> = vec![LabelPair {
             name: "__name__".to_string(),
             value: x.metric.to_string(),
-        });
-        for (k, v) in x.labels.iter() {
-            labelset.push(LabelPair {
-                name: k.to_string(),
-                value: v.to_string(),
-            });
-        }
-        let res: Vec<LabelPair> = labelset
-            .into_iter()
-            .sorted_unstable_by_key(|k| k.name.to_string())
-            .collect();
-        OrderedLabelSet(res)
+        }];
+        labelset.extend(
+            x.labels
+                .iter()
+                .map(|m| LabelPair {
+                    name: m.0.to_string(),
+                    value: m.1.to_string(),
+                })
+                .collect::<Vec<LabelPair>>(),
+        );
+        OrderedLabelSet(
+            labelset
+                .into_iter()
+                .sorted_unstable_by_key(|k| k.name.to_string())
+                .collect(),
+        )
     }
 }
 
