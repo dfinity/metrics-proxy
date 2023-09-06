@@ -1,3 +1,4 @@
+use axum_otel_metrics::HttpMetricsLayerBuilder;
 use clap::Parser;
 use tokio::task::JoinSet;
 
@@ -16,11 +17,36 @@ async fn main() {
         std::process::exit(exitcode::CONFIG);
     }
     let mut set = JoinSet::new();
-    let proxylist: Vec<metrics_proxy::config::HttpProxy> = maybecfg.unwrap().into();
+
+    let cfg = maybecfg.unwrap();
+    let mut telemetry = match cfg.metrics.clone() {
+        Some(listener) => Some((
+            listener,
+            HttpMetricsLayerBuilder::new()
+                .with_service_name(env!("CARGO_PKG_NAME").to_string())
+                .with_service_version(env!("CARGO_PKG_VERSION").to_string())
+                .build(),
+        )),
+        None => None,
+    };
+    let proxylist: Vec<metrics_proxy::config::HttpProxy> = cfg.into();
+
     for proxy in proxylist {
-        let server = metrics_proxy::server::Server::from(proxy);
+        let mut server = metrics_proxy::server::Server::from(proxy);
+        telemetry = match telemetry {
+            Some((t, m)) => {
+                server = server.with_telemetry(m.clone());
+                Some((t, m))
+            }
+            _ => None,
+        };
         set.spawn(async move { server.serve().await });
     }
+    if let Some((t, m)) = telemetry {
+        let server = metrics_proxy::server::Server::for_service_metrics(t).with_telemetry(m);
+        set.spawn(async move { server.serve().await });
+    }
+
     while let Some(res) = set.join_next().await {
         if let Err(error) = res.unwrap() {
             eprintln!("HTTP server failed: {error}");

@@ -25,6 +25,8 @@ proxies:
           - reduce_time_resolution:
               resolution: 5s
           - keep
+    metrics:
+      url: http://127.0.0.1:8008/metrics
 ```
 
 Another sample configuration file has been included with the source
@@ -36,6 +38,12 @@ The meaning of each structure in the configuration file is explained below.
 
 A top-level list of dictionaries, each of which must contain a `proxy` object.
 Multiple proxies are natively supported.
+
+### `metrics`
+
+A single `listen_on` specification that determines if and where the metrics
+handler listens to.  If absent, no metrics server will be started, and no
+metrics will be collected.
 
 ### `proxy`
 
@@ -124,3 +132,22 @@ Currently, there are three action classes:
   parameter as a duration in string form) instructs the proxy to serve
   the metric from a cache unless the cache entry is older than the
   specified time resolution.
+
+## Operations
+
+### Metrics
+
+Metrics are a vital part of keeping software running correctly.  This program
+can emit metrics (see the configuration to learn how to enable it), which can
+then be scraped by a Prometheus server.
+
+Metrics to pay attention to:
+
+* `http_server_active_requests`: if this gauge is high, you may be under a
+  denial of service attack.
+* `http_server_request_duration_seconds_count`: any time series with an
+   `http_response_status_code` other than 200 is usually indication that
+   there is a problem with the backend accessed by the specific proxy
+   indicated by the `server_address` and `http_route`.  504 status codes
+   indicate the backend server failed to respond on time, while 502 status
+   codes indicate the backend server is down or refusing to accept requests.

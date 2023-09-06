@@ -418,6 +418,7 @@ struct ProxyEntry {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     proxies: Vec<ProxyEntry>,
+    pub metrics: Option<ListenerSpec>,
 }
 
 #[derive(Debug)]
@@ -540,6 +541,16 @@ impl TryFrom<PathBuf> for Config {
                 }
             }
         }
+
+        if let Some(telemetry) = &cfg.metrics {
+            if let Some(proxy) = by_host_port.get(&format!("{}", telemetry.sockaddr)) {
+                return Err(Self::Error::ConflictingConfig(format!(
+                    "telemetry configuration cannot reuse the host and port used by proxy {}",
+                    proxy.index + 1
+                )));
+            }
+        }
+
         Ok(cfg)
     }
 }
