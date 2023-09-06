@@ -10,7 +10,6 @@ use std::fmt;
 use std::io::Cursor;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::time::Duration;
 use url::Url;
 
@@ -467,70 +466,78 @@ impl TryFrom<PathBuf> for Config {
         if let Err(error) = maybecfg {
             return Err(Self::Error::ParseError(error));
         }
+
         let cfg = maybecfg.unwrap();
         let mut by_host_port_handler = std::collections::HashMap::new();
         let mut by_host_port: HashMap<String, IndexAndProtocol> = std::collections::HashMap::new();
         for (index, element) in cfg.proxies.iter().enumerate() {
-            let host_port = format!("{}", element.listen_on.sockaddr);
             let host_port_handler = format!(
                 "{}/{}",
                 element.listen_on.sockaddr, element.listen_on.handler
             );
-            if let Some(priorindex) = by_host_port_handler.get(&host_port_handler) {
-                return Err(Self::Error::ConflictingConfig(
+            match by_host_port_handler.get(&host_port_handler) {
+                Some(priorindex) => {
+                    return Err(Self::Error::ConflictingConfig(
                     format!(
                         "proxy {} in configuration proxies list contains the same host, port and handler as proxy {}; two proxies cannot listen on the same HTTP handler simultaneously",
                         priorindex + 1, index + 1
                     )
                 ));
+                }
+                None => {
+                    by_host_port_handler.insert(host_port_handler, index);
+                }
             }
-            by_host_port_handler.insert(host_port_handler, index);
 
-            if let Some(prior) = by_host_port.get(&host_port) {
-                if let Protocol::Https {
-                    certificate: firstcert,
-                    key: firstkey,
-                } = element.listen_on.protocol.clone()
-                {
+            let host_port = format!("{}", element.listen_on.sockaddr);
+            match by_host_port.get(&host_port) {
+                Some(prior) => {
                     if let Protocol::Https {
-                        certificate: secondcert,
-                        key: secondkey,
-                    } = prior.protocol.clone()
+                        certificate: thiscert,
+                        key: thiskey,
+                    } = element.listen_on.protocol.clone()
                     {
-                        if firstcert != secondcert {
-                            return Err(Self::Error::ConflictingConfig(
+                        if let Protocol::Https {
+                            certificate: priorcert,
+                            key: priorkey,
+                        } = prior.protocol.clone()
+                        {
+                            if thiscert != priorcert {
+                                return Err(Self::Error::ConflictingConfig(
                                 format!(
                                     "proxy {} uses a different certificate from proxy {}; the same listening address must use the same certificate",
                                     prior.index + 1, index + 1
                                 )
                             ));
-                        }
-                        if firstkey != secondkey {
-                            return Err(Self::Error::ConflictingConfig(
+                            }
+                            if thiskey != priorkey {
+                                return Err(Self::Error::ConflictingConfig(
                                 format!(
                                     "proxy {} uses a different private key from proxy {}; the same listening address must use the same private key",
                                     prior.index + 1, index + 1
                                 )
                             ));
+                            }
                         }
                     }
-                }
-                if element.listen_on.protocol != prior.protocol {
-                    return Err(Self::Error::ConflictingConfig(
+                    if element.listen_on.protocol != prior.protocol {
+                        return Err(Self::Error::ConflictingConfig(
                         format!(
                             "proxy {} in configuration proxies list uses a protocol conflicting with proxy {} listening on the same host and port; the same listening address cannot serve both HTTP and HTTPS at the same time",
                             prior.index + 1, index + 1
                         )
                     ));
+                    }
                 }
-            } else {
-                by_host_port.insert(
-                    host_port,
-                    IndexAndProtocol {
-                        index,
-                        protocol: element.listen_on.protocol.clone(),
-                    },
-                );
+                None => {
+                    by_host_port.insert(
+                        host_port,
+                        IndexAndProtocol {
+                            index,
+                            protocol: element.listen_on.protocol.clone(),
+                        },
+                    );
+                }
             }
         }
         Ok(cfg)
@@ -558,43 +565,43 @@ impl From<Config> for Vec<HttpProxy> {
         let mut servers: HashMap<String, HttpProxy> = HashMap::new();
         for proxy in val.proxies {
             let listen_on = proxy.listen_on;
-            let handler = listen_on.handler.clone();
             let serveraddr = format!("{}", listen_on.sockaddr);
 
-            if !servers.contains_key(&serveraddr) {
-                servers.insert(
-                    String::from_str(&serveraddr).unwrap(),
-                    HttpProxy {
-                        listen_on: listen_on,
-                        handlers: HashMap::new(),
-                    },
-                );
-            }
+            let newhandlers = HashMap::from([(
+                listen_on.handler.clone(),
+                HttpProxyTarget {
+                    connect_to: proxy.connect_to,
+                    label_filters: proxy.label_filters,
+                },
+            )]);
 
-            if !servers
-                .get(&serveraddr)
-                .unwrap()
-                .handlers
-                .contains_key(&handler)
-            {
-                let oldserver = servers.remove(&serveraddr).unwrap();
-                servers.insert(
-                    String::from_str(&serveraddr).unwrap(),
-                    HttpProxy {
-                        listen_on: oldserver.listen_on,
-                        handlers: oldserver
-                            .handlers
-                            .into_iter()
-                            .chain(HashMap::from([(
-                                handler,
-                                HttpProxyTarget {
-                                    connect_to: proxy.connect_to,
-                                    label_filters: proxy.label_filters,
-                                },
-                            )]))
-                            .collect(),
-                    },
-                );
+            match servers.get(&serveraddr) {
+                None => {
+                    servers.insert(
+                        serveraddr,
+                        HttpProxy {
+                            listen_on: listen_on,
+                            handlers: newhandlers,
+                        },
+                    );
+                }
+                Some(oldserver) => match oldserver.handlers.get(&listen_on.handler) {
+                    None => {
+                        servers.insert(
+                            serveraddr,
+                            HttpProxy {
+                                listen_on: oldserver.listen_on.clone(),
+                                handlers: oldserver
+                                    .handlers
+                                    .clone()
+                                    .into_iter()
+                                    .chain(newhandlers)
+                                    .collect(),
+                            },
+                        );
+                    }
+                    _ => (),
+                },
             }
         }
         servers.values().cloned().collect()
