@@ -154,6 +154,7 @@ fn default_label_separator() -> String {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 /// Match each returned time series (to be processed) according to
 /// the listed labels, concatenated according to the separator,
 /// and matching with the specified regular expression, anchored
@@ -222,6 +223,7 @@ fn default_request_response_timeout() -> DurationString {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 /// Specifies which host and port to listen on, and on which
 /// HTTP handler (path) to respond to.
 struct ListenOn {
@@ -406,6 +408,7 @@ impl<'de> Deserialize<'de> for ConnectTo {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConfigProxyEntry {
     listen_on: ListenOnInternal,
     connect_to: ConnectTo,
@@ -413,6 +416,7 @@ struct ConfigProxyEntry {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     proxies: Vec<ConfigProxyEntry>,
 }
