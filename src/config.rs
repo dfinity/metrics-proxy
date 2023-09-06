@@ -409,7 +409,7 @@ impl<'de> Deserialize<'de> for ConnectTo {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ConfigProxyEntry {
+struct ProxyEntry {
     listen_on: ListenerSpec,
     connect_to: ConnectTo,
     label_filters: Vec<LabelFilter>,
@@ -418,7 +418,7 @@ struct ConfigProxyEntry {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    proxies: Vec<ConfigProxyEntry>,
+    proxies: Vec<ProxyEntry>,
 }
 
 #[derive(Debug)]
