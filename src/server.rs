@@ -88,15 +88,11 @@ impl Server {
             response
         }
 
-        let (header_read_timeout, request_response_timeout, sockaddr, protocol) = (
-            self.config.header_read_timeout,
-            self.config.request_response_timeout,
-            self.config.sockaddr,
-            self.config.protocol.clone(),
-        );
+        let listener = self.config.listen_on;
 
         let mut router: Router<_, _> = Router::new();
-        let bodytimeout = tower_http::timeout::RequestBodyTimeoutLayer::new(header_read_timeout);
+        let bodytimeout =
+            tower_http::timeout::RequestBodyTimeoutLayer::new(listener.header_read_timeout);
 
         for (path, target) in self.config.handlers.clone() {
             let state = Arc::new(proxy::MetricsProxier::from(target));
@@ -115,20 +111,20 @@ impl Server {
         // (Contrast with backend down -- this usually requires a response
         // of 502 Bad Gateway, which is already issued by the client handler.)
         let timeout_handling_layer =
-            tower_http::timeout::TimeoutLayer::new(request_response_timeout);
+            tower_http::timeout::TimeoutLayer::new(listener.request_response_timeout);
         router = router
             .layer(timeout_handling_layer)
             .layer(map_response(gateway_timeout));
 
-        let incoming = AddrIncoming::bind(&sockaddr).map_err(|error| StartError {
-            addr: sockaddr,
+        let incoming = AddrIncoming::bind(&listener.sockaddr).map_err(|error| StartError {
+            addr: listener.sockaddr,
             error: ServeErrorKind::HyperError(error),
         })?;
 
-        match &protocol {
+        match &listener.protocol {
             config::Protocol::Http => {
                 hyper::Server::builder(incoming)
-                    .http1_header_read_timeout(header_read_timeout)
+                    .http1_header_read_timeout(listener.header_read_timeout)
                     .serve(router.into_make_service())
                     .await
             }
@@ -137,19 +133,19 @@ impl Server {
                     TlsAcceptor::builder()
                         .with_single_cert(certificate.clone(), key.clone())
                         .map_err(|error| StartError {
-                            addr: sockaddr,
+                            addr: listener.sockaddr,
                             error: ServeErrorKind::RustlsError(error),
                         })?
                         .with_all_versions_alpn()
                         .with_incoming(incoming),
                 )
-                .http1_header_read_timeout(header_read_timeout)
+                .http1_header_read_timeout(listener.header_read_timeout)
                 .serve(router.into_make_service())
                 .await
             }
         }
         .map_err(|error| StartError {
-            addr: sockaddr,
+            addr: listener.sockaddr,
             error: ServeErrorKind::HyperError(error),
         })
     }

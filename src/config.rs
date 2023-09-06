@@ -169,14 +169,14 @@ pub struct LabelFilter {
     pub actions: Vec<LabelFilterAction>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(try_from = "ListenOn")]
-struct ListenerSpec {
-    protocol: Protocol,
-    sockaddr: SocketAddr,
-    header_read_timeout: DurationString,
-    request_response_timeout: DurationString,
-    handler: String,
+pub struct ListenerSpec {
+    pub protocol: Protocol,
+    pub sockaddr: SocketAddr,
+    pub header_read_timeout: Duration,
+    pub request_response_timeout: Duration,
+    pub handler: String,
 }
 
 enum InvalidURLError {
@@ -344,8 +344,8 @@ impl TryFrom<ListenOn> for ListenerSpec {
             protocol: proto,
             sockaddr,
             handler: other.url.path().to_owned(),
-            header_read_timeout: other.header_read_timeout,
-            request_response_timeout: other.request_response_timeout,
+            header_read_timeout: other.header_read_timeout.into(),
+            request_response_timeout: other.request_response_timeout.into(),
         })
     }
 }
@@ -544,10 +544,7 @@ pub struct HttpProxyTarget {
 }
 #[derive(Debug, Clone)]
 pub struct HttpProxy {
-    pub protocol: Protocol,
-    pub sockaddr: SocketAddr,
-    pub header_read_timeout: Duration,
-    pub request_response_timeout: Duration,
+    pub listen_on: ListenerSpec,
     pub handlers: HashMap<String, HttpProxyTarget>,
 }
 
@@ -561,47 +558,41 @@ impl From<Config> for Vec<HttpProxy> {
         let mut servers: HashMap<String, HttpProxy> = HashMap::new();
         for proxy in val.proxies {
             let listen_on = proxy.listen_on;
+            let handler = listen_on.handler.clone();
             let serveraddr = format!("{}", listen_on.sockaddr);
+
             if !servers.contains_key(&serveraddr) {
                 servers.insert(
                     String::from_str(&serveraddr).unwrap(),
                     HttpProxy {
-                        protocol: listen_on.protocol,
-                        sockaddr: listen_on.sockaddr,
-                        header_read_timeout: listen_on.header_read_timeout.into(),
-                        request_response_timeout: listen_on.request_response_timeout.into(),
+                        listen_on: listen_on,
                         handlers: HashMap::new(),
                     },
                 );
             }
+
             if !servers
                 .get(&serveraddr)
                 .unwrap()
                 .handlers
-                .contains_key(&listen_on.handler)
+                .contains_key(&handler)
             {
-                let newhandlers = HashMap::from([(
-                    listen_on.handler.clone(),
-                    HttpProxyTarget {
-                        connect_to: proxy.connect_to,
-                        label_filters: proxy.label_filters,
-                    },
-                )]);
                 let oldserver = servers.remove(&serveraddr).unwrap();
-                let concathandlers = oldserver
-                    .handlers
-                    .clone()
-                    .into_iter()
-                    .chain(newhandlers)
-                    .collect();
                 servers.insert(
                     String::from_str(&serveraddr).unwrap(),
                     HttpProxy {
-                        protocol: oldserver.protocol,
-                        sockaddr: oldserver.sockaddr,
-                        header_read_timeout: oldserver.header_read_timeout,
-                        request_response_timeout: oldserver.request_response_timeout,
-                        handlers: concathandlers,
+                        listen_on: oldserver.listen_on,
+                        handlers: oldserver
+                            .handlers
+                            .into_iter()
+                            .chain(HashMap::from([(
+                                handler,
+                                HttpProxyTarget {
+                                    connect_to: proxy.connect_to,
+                                    label_filters: proxy.label_filters,
+                                },
+                            )]))
+                            .collect(),
                     },
                 );
             }
