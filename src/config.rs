@@ -171,7 +171,7 @@ pub struct LabelFilter {
 
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "ListenOn")]
-struct ListenOnInternal {
+struct ListenerSpec {
     protocol: Protocol,
     sockaddr: SocketAddr,
     header_read_timeout: DurationString,
@@ -297,7 +297,7 @@ impl From<std::io::Error> for ListenOnParseError {
     }
 }
 
-impl TryFrom<ListenOn> for ListenOnInternal {
+impl TryFrom<ListenOn> for ListenerSpec {
     type Error = ListenOnParseError;
 
     fn try_from(other: ListenOn) -> Result<Self, Self::Error> {
@@ -340,7 +340,7 @@ impl TryFrom<ListenOn> for ListenOnInternal {
         }
         let proto = Protocol::try_from(&other)?;
 
-        Ok(ListenOnInternal {
+        Ok(ListenerSpec {
             protocol: proto,
             sockaddr,
             handler: other.url.path().to_owned(),
@@ -410,7 +410,7 @@ impl<'de> Deserialize<'de> for ConnectTo {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfigProxyEntry {
-    listen_on: ListenOnInternal,
+    listen_on: ListenerSpec,
     connect_to: ConnectTo,
     label_filters: Vec<LabelFilter>,
 }
