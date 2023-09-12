@@ -39,26 +39,18 @@ The meaning of each structure in the configuration file is explained below.
 A top-level list of dictionaries, each of which must contain a `proxy` object.
 Multiple proxies are natively supported.
 
-### `metrics`
-
-A single `listen_on` specification that determines if and where the metrics
-handler listens to (the handler dedicated to serving metrics intrinsic to
-this program, rather than proxying metrics from other exporters).
-
-If absent, no intrinsic metrics will be made available.
-
 ### `proxy`
 
 A dictionary that contains three key / value pairs:
 
-* `listen_on`
+* `listen_on` -> `listener_spec`
 * `connect_to`
 * `label_filters`
 
 The proxy object determines where to listen on, where to fetch metrics from,
 and how the fetched metrics will be post-processed by the proxy.
 
-### `listen_on`
+### `listener_spec`
 
 A dictionary that requires only one key: `url`.  Fragments and query
 strings in the URL are not supported, and the only schemes supported
@@ -86,9 +78,9 @@ Additionally, two timeouts can be specified (as a Rust duration string):
   take (including the time spent contacting the proxy) all the way until
   the last byte is sent to the client.
 
-No two `listen_on` entries may share the same host, port, handler path and
-protocol, since then the proxy would not be able to decide which one of the
-targets should be proxied.
+No two `listener_spec` entries may share the same host, port, handler path
+and protocol, since then the proxy would not be able to decide which one of
+the targets should be proxied.
 
 ### `connect_to`
 
@@ -134,6 +126,14 @@ Currently, there are three action classes:
   parameter as a duration in string form) instructs the proxy to serve
   the metric from a cache unless the cache entry is older than the
   specified time resolution.
+
+### `metrics`
+
+A single `listener_spec` that determines if and where the metrics handler
+listens to (the handler dedicated to serving metrics intrinsic to this
+program, rather than proxying metrics from other exporters).
+
+If absent, no intrinsic metrics will be made available.
 
 ## Operations
 
