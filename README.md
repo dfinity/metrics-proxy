@@ -25,8 +25,8 @@ proxies:
           - reduce_time_resolution:
               resolution: 5s
           - keep
-    metrics:
-      url: http://127.0.0.1:8008/metrics
+metrics:
+  url: http://127.0.0.1:8008/metrics
 ```
 
 Another sample configuration file has been included with the source
