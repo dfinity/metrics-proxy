@@ -43,9 +43,9 @@ Multiple proxies are natively supported.
 
 A dictionary that contains three key / value pairs:
 
-* `listen_on` -> `listener_spec`
-* `connect_to`
-* `label_filters`
+* `listen_on`: a `listener_spec`
+* `connect_to`: a `connector_spec`
+* `label_filters`: a `label_filters_spec`
 
 The proxy object determines where to listen on, where to fetch metrics from,
 and how the fetched metrics will be post-processed by the proxy.
@@ -74,7 +74,7 @@ Additionally, two timeouts can be specified (as a Rust duration string):
   Specifically, the time counts from the first HTTP-level byte the
   client sends to the last carriage return in the request header.
 * `request_response_timeout` (default 5 seconds more than `timeout` in
-  the `connect_to` structure) specifies how long the whole request may
+  the `connector_spec` structure) specifies how long the whole request may
   take (including the time spent contacting the proxy) all the way until
   the last byte is sent to the client.
 
@@ -82,7 +82,7 @@ No two `listener_spec` entries may share the same host, port, handler path
 and protocol, since then the proxy would not be able to decide which one of
 the targets should be proxied.
 
-### `connect_to`
+### `connector_spec`
 
 A dictionary with one mandatory field: `url`.  The protocol of the URL
 must be one of `http` or `https`, fragments are not allowed in the
@@ -92,7 +92,7 @@ Optionally, a `timeout` can be specified (as a Rust duration string) to
 instruct the proxy on how long it should wait until the proxied exporter has
 fully responded.  The default timeout is 30 seconds.
 
-### `label_filters`
+### `label_filters_spec`
 
 A list of one or more `label_filter`.  Each `label_filter` is applied
 in sequence to each metric as it comes through the proxy pipeline.
