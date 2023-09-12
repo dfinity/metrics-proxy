@@ -42,8 +42,10 @@ Multiple proxies are natively supported.
 ### `metrics`
 
 A single `listen_on` specification that determines if and where the metrics
-handler listens to.  If absent, no metrics server will be started, and no
-metrics will be collected.
+handler listens to (the handler dedicated to serving metrics intrinsic to
+this program, rather than proxying metrics from other exporters).
+
+If absent, no intrinsic metrics will be made available.
 
 ### `proxy`
 
