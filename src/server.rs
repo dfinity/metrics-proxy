@@ -1,10 +1,11 @@
-use crate::config::{self, HttpProxy};
+use crate::config::{self, HttpProxy, ListenerSpec};
 use crate::proxy;
 use axum::extract::State;
 use axum::http;
 use axum::http::StatusCode;
 use axum::middleware::map_response;
 use axum::{routing::get, Router};
+use axum_otel_metrics::HttpMetricsLayer;
 use hyper;
 use hyper::server::conn::AddrIncoming;
 use hyper_rustls::TlsAcceptor;
@@ -45,17 +46,52 @@ impl fmt::Display for StartError {
     }
 }
 
+enum ServerKind {
+    PrometheusMetricsProxy(HttpProxy),
+    PrometheusMetricsServer(ListenerSpec),
+}
+
 pub struct Server {
-    config: HttpProxy,
+    config: ServerKind,
+    metrics_collector: Option<HttpMetricsLayer>,
 }
 
 impl From<HttpProxy> for Server {
     fn from(config: HttpProxy) -> Self {
-        Server { config }
+        Self::for_metrics_proxy(config)
     }
 }
 
 impl Server {
+    #[must_use]
+    /// Configures this `Server` to proxy one or more handlers
+    /// to a backend endpoint each.
+    pub fn for_metrics_proxy(config: HttpProxy) -> Self {
+        Server {
+            config: ServerKind::PrometheusMetricsProxy(config),
+            metrics_collector: None,
+        }
+    }
+
+    #[must_use]
+    /// Configures this `Server` to serve Prometheus metrics
+    /// collected during proxying.
+    pub fn for_service_metrics(listen_on: ListenerSpec) -> Self {
+        Server {
+            config: ServerKind::PrometheusMetricsServer(listen_on),
+            metrics_collector: None,
+        }
+    }
+
+    #[must_use]
+    /// Enables telemetry collection.
+    pub fn with_telemetry(self, ml: HttpMetricsLayer) -> Self {
+        Server {
+            config: self.config,
+            metrics_collector: Some(ml),
+        }
+    }
+
     // FIXME: wholepage caching to be implemented, only
     // for valid 200 OK responses, as a layer of the method
     // router rather than at the top level app router.
@@ -88,23 +124,37 @@ impl Server {
             response
         }
 
-        let listener = self.config.listen_on;
+        let listener = match &self.config {
+            ServerKind::PrometheusMetricsProxy(config) => config.listen_on.clone(),
+            ServerKind::PrometheusMetricsServer(listen_on) => listen_on.clone(),
+        };
 
         let mut router: Router<_, _> = Router::new();
         let bodytimeout =
             tower_http::timeout::RequestBodyTimeoutLayer::new(listener.header_read_timeout);
 
-        for (path, target) in self.config.handlers.clone() {
-            let state = Arc::new(proxy::MetricsProxier::from(target));
-            router = router.route(
-                path.as_str(),
-                get(handle_with_proxy)
-                    .with_state(state)
-                    .layer(tower::ServiceBuilder::new().layer(bodytimeout.clone())),
-            );
-        }
+        router = match self.config {
+            ServerKind::PrometheusMetricsProxy(config) => {
+                for (path, target) in config.handlers.clone() {
+                    let state = Arc::new(proxy::MetricsProxier::from(target));
+                    router = router.route(
+                        path.as_str(),
+                        get(handle_with_proxy)
+                            .with_state(state)
+                            .layer(tower::ServiceBuilder::new().layer(bodytimeout.clone())),
+                    );
+                }
+                router
+            }
+            ServerKind::PrometheusMetricsServer(listen_on) => {
+                match self.metrics_collector.clone() {
+                    Some(pl) => router.merge(pl.path_route(listen_on.handler)),
+                    None => router,
+                }
+            }
+        };
 
-        // Last the timeout layer.
+        // Second-to-last the timeout layer.
         // The timeout layer returns HTTP status code 408 if the backend
         // fails to respond on time.  When this happens, we map that code
         // to 503 Gateway Timeout.
@@ -115,6 +165,14 @@ impl Server {
         router = router
             .layer(timeout_handling_layer)
             .layer(map_response(gateway_timeout));
+
+        // Then, finally, the telemetry layer.
+        // Experimentally, if the telemetry layer does not go last, then
+        // whatever errors the timeout layers bubble up, the telemetry
+        // layer cannot register as an HTTP error.
+        if let Some(pl) = self.metrics_collector {
+            router = router.layer(pl);
+        }
 
         let incoming = AddrIncoming::bind(&listener.sockaddr).map_err(|error| StartError {
             addr: listener.sockaddr,

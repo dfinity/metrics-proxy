@@ -12,3 +12,5 @@ proxies:
           - reduce_time_resolution:
               resolution: 5s
           - keep
+metrics:
+  url: http://127.0.0.1:18081/metrics

@@ -25,6 +25,8 @@ proxies:
           - reduce_time_resolution:
               resolution: 5s
           - keep
+metrics:
+  url: http://127.0.0.1:8008/metrics
 ```
 
 Another sample configuration file has been included with the source
@@ -41,14 +43,14 @@ Multiple proxies are natively supported.
 
 A dictionary that contains three key / value pairs:
 
-* `listen_on`
-* `connect_to`
-* `label_filters`
+* `listen_on`: a `listener_spec`
+* `connect_to`: a `connector_spec`
+* `label_filters`: a `label_filters_spec`
 
 The proxy object determines where to listen on, where to fetch metrics from,
 and how the fetched metrics will be post-processed by the proxy.
 
-### `listen_on`
+### `listener_spec`
 
 A dictionary that requires only one key: `url`.  Fragments and query
 strings in the URL are not supported, and the only schemes supported
@@ -72,15 +74,15 @@ Additionally, two timeouts can be specified (as a Rust duration string):
   Specifically, the time counts from the first HTTP-level byte the
   client sends to the last carriage return in the request header.
 * `request_response_timeout` (default 5 seconds more than `timeout` in
-  the `connect_to` structure) specifies how long the whole request may
+  the `connector_spec` structure) specifies how long the whole request may
   take (including the time spent contacting the proxy) all the way until
   the last byte is sent to the client.
 
-No two `listen_on` entries may share the same host, port, handler path and
-protocol, since then the proxy would not be able to decide which one of the
-targets should be proxied.
+No two `listener_spec` entries may share the same host, port, handler path
+and protocol, since then the proxy would not be able to decide which one of
+the targets should be proxied.
 
-### `connect_to`
+### `connector_spec`
 
 A dictionary with one mandatory field: `url`.  The protocol of the URL
 must be one of `http` or `https`, fragments are not allowed in the
@@ -90,7 +92,7 @@ Optionally, a `timeout` can be specified (as a Rust duration string) to
 instruct the proxy on how long it should wait until the proxied exporter has
 fully responded.  The default timeout is 30 seconds.
 
-### `label_filters`
+### `label_filters_spec`
 
 A list of one or more `label_filter`.  Each `label_filter` is applied
 in sequence to each metric as it comes through the proxy pipeline.
@@ -124,3 +126,30 @@ Currently, there are three action classes:
   parameter as a duration in string form) instructs the proxy to serve
   the metric from a cache unless the cache entry is older than the
   specified time resolution.
+
+### `metrics`
+
+A single `listener_spec` that determines if and where the metrics handler
+listens to (the handler dedicated to serving metrics intrinsic to this
+program, rather than proxying metrics from other exporters).
+
+If absent, no intrinsic metrics will be made available.
+
+## Operations
+
+### Metrics
+
+Metrics are a vital part of keeping software running correctly.  This program
+can emit metrics (see the configuration to learn how to enable it), which can
+then be scraped by a Prometheus server.
+
+Metrics to pay attention to:
+
+* `http_server_active_requests`: if this gauge is high, you may be under a
+  denial of service attack.
+* `http_server_request_duration_seconds_count`: any time series with an
+   `http_response_status_code` other than 200 is usually indication that
+   there is a problem with the backend accessed by the specific proxy
+   indicated by the `server_address` and `http_route`.  504 status codes
+   indicate the backend server failed to respond on time, while 502 status
+   codes indicate the backend server is down or refusing to accept requests.
