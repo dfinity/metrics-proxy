@@ -153,3 +153,8 @@ Metrics to pay attention to:
    indicated by the `server_address` and `http_route`.  504 status codes
    indicate the backend server failed to respond on time, while 502 status
    codes indicate the backend server is down or refusing to accept requests.
+
+## License
+
+This software is distributed under the provisions of the
+[Apache 2.0 license](./LICENSE).
