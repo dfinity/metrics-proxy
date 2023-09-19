@@ -158,3 +158,9 @@ Metrics to pay attention to:
 
 This software is distributed under the provisions of the
 [Apache 2.0 license](./LICENSE).
+
+## Contributions
+
+We appreciate anyone who wants to contribute to this project.  Our
+contributions follow the standard Github model -- you can create issues,
+fork the project, and send pull requests.
