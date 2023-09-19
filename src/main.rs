@@ -8,8 +8,7 @@ struct MetricsProxyArgs {
     config: std::path::PathBuf,
 }
 
-#[tokio::main]
-async fn main() {
+pub async fn run() {
     let args = MetricsProxyArgs::parse();
     let maybecfg = metrics_proxy::config::Config::try_from(args.config.clone());
     if let Err(error) = maybecfg {
@@ -53,4 +52,9 @@ async fn main() {
             std::process::exit(exitcode::OSERR);
         }
     }
+}
+
+#[tokio::main]
+async fn main() {
+    run().await
 }
