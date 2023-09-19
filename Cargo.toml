@@ -28,3 +28,7 @@ url = { version = "2.4.1", features = ["serde"] }
 prometheus = { version = "0.13.3", features = ["process"] }
 lazy_static = "1.4.0"
 axum-otel-metrics = { git = "https://github.com/DFINITYManu/axum-otel-metrics.git" }
+
+[[bin]]
+name = "metrics-proxy"
+path = "src/main.rs"
