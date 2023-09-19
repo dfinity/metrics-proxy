@@ -158,7 +158,7 @@ dependencies = [
 [[package]]
 name = "axum-otel-metrics"
 version = "0.6.0"
-source = "git+https://github.com/DFINITYManu/axum-otel-metrics.git#c93e2d4efdf1503ee98e60294712b4ac7942160a"
+source = "git+https://github.com/DFINITYManu/axum-otel-metrics.git?rev=c93e2d4efdf1503ee98e60294712b4ac7942160a#c93e2d4efdf1503ee98e60294712b4ac7942160a"
 dependencies = [
  "axum",
  "futures-util",
