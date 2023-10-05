@@ -44,11 +44,11 @@ impl From<HttpError> for ScrapeError {
 /// # Errors
 /// * `ScrapeError`
 pub async fn scrape(
+    client: reqwest::Client,
     c: &crate::config::ConnectTo,
     h: reqwest::header::HeaderMap,
 ) -> Result<ScrapeResult, ScrapeError> {
     let url = c.url.to_string();
-    let client = reqwest::Client::new();
     let response = client
         .get(url)
         .headers(h)

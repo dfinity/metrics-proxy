@@ -178,6 +178,7 @@ fn render_scrape_data(scrape: &prometheus_parse::Scrape) -> String {
 pub struct MetricsProxier {
     target: HttpProxyTarget,
     cache: Arc<Mutex<SampleCacheStore>>,
+    client: reqwest::Client,
 }
 
 impl From<HttpProxyTarget> for MetricsProxier {
@@ -185,6 +186,7 @@ impl From<HttpProxyTarget> for MetricsProxier {
         MetricsProxier {
             target,
             cache: Arc::new(Mutex::new(SampleCacheStore::default())),
+            client: reqwest::Client::new(),
         }
     }
 }
@@ -192,7 +194,8 @@ impl From<HttpProxyTarget> for MetricsProxier {
 impl MetricsProxier {
     pub async fn handle(&self, headers: http::HeaderMap) -> (StatusCode, http::HeaderMap, String) {
         let clientheaders = safely_clone_request_headers(headers);
-        let result = client::scrape(&self.target.connect_to, clientheaders).await;
+        let result =
+            client::scrape(self.client.clone(), &self.target.connect_to, clientheaders).await;
         match result {
             Err(error) => match error {
                 client::ScrapeError::Non200(non200) => (
@@ -248,11 +251,11 @@ impl MetricsProxier {
         let mut docs: HashMap<String, String> = HashMap::new();
 
         {
+            let now = std::time::Instant::now();
             let mut cache = self.cache.lock().unwrap();
 
             for sample in series.samples {
                 let mut keep: Option<bool> = None;
-                let now = std::time::Instant::now();
                 let mut cached_sample: Option<Sample> = None;
                 // The following value, if true at the end of this loop,
                 // indicates whether the sample should be cached for
