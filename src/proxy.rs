@@ -1,5 +1,5 @@
 use crate::config::HttpProxyTarget;
-use crate::{cache::SampleCacheStore, client, config};
+use crate::{cache::ResponseCacher, cache::SampleCacheStore, client, config};
 use axum::http;
 use axum::http::StatusCode;
 use itertools::Itertools;
@@ -10,6 +10,7 @@ use std::f64;
 use std::iter::zip;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::RwLock;
 
 // Headers that must not be relayed from backend to client or vice versa.
 static HOPBYHOP: [&str; 8] = [
@@ -325,6 +326,61 @@ impl MetricsProxier {
     }
 }
 
+/// The metrics cacher caches responses from the metrics proxier.
+#[derive(Clone)]
+pub struct CachedMetricsProxier {
+    proxier: MetricsProxier,
+    cache: Arc<RwLock<ResponseCacher>>,
+}
+
+impl CachedMetricsProxier {
+    pub fn from(proxier: MetricsProxier, staleness: Duration) -> Self {
+        CachedMetricsProxier {
+            proxier,
+            cache: Arc::new(RwLock::new(ResponseCacher::new(staleness))),
+        }
+    }
+
+    pub async fn handle(&self, headers: http::HeaderMap) -> (StatusCode, http::HeaderMap, String) {
+        let now = std::time::Instant::now();
+        // Check that the cache is up-to-date.
+        let cache = self.cache.write().await;
+        match cache.get(now) {
+            Some(cached) => (
+                cached.status,
+                cached.headers.clone(),
+                cached.contents.clone(),
+            ),
+            None => {
+                // Prepare to tentatively update the cache.
+                drop(cache);
+                let mut cache = self.cache.write().await;
+                // Check if the cache was updated by another writer.
+                // If it was, then simply serve the cached response.
+                // This could have happened because multiple threads
+                // concluded that the cache was stale almost at the
+                // same time, and decided to step into this branch,
+                // with one of them updating the cache before the
+                // others succeeded in grabbing the lock.
+                match cache.get(now) {
+                    Some(cached) => (
+                        cached.status,
+                        cached.headers.clone(),
+                        cached.contents.clone(),
+                    ),
+                    None => {
+                        let (status, headers, contents) = self.proxier.handle(headers).await;
+                        if status.is_success() {
+                            cache.put(status, headers.clone(), contents.clone(), now);
+                        };
+                        (status, headers, contents)
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::render_scrape_data;
@@ -340,6 +396,7 @@ mod tests {
                 timeout: DurationString::new(Duration::new(5, 0)),
             },
             label_filters: filters,
+            cache_duration: DurationString::new(Duration::new(0, 0)),
         }
     }
 

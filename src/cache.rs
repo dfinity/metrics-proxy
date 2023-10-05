@@ -1,7 +1,12 @@
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+/// Caching primitives used by metrics-proxy.
+///
+/// This file contains caching primitives for both the code that filters and
+/// reduces time resolution of metrics, as well as the code that deals with
+/// post-processed HTTP responses from backends.
+use axum::http;
+use axum::http::StatusCode;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use itertools::Itertools;
 use prometheus_parse::Sample;
@@ -86,5 +91,60 @@ impl SampleCacheStore {
                 saved_at: at_,
             },
         );
+    }
+}
+
+pub struct CachedResponse {
+    saved_at: Instant,
+    pub status: StatusCode,
+    pub headers: http::HeaderMap,
+    pub contents: String,
+}
+
+pub struct ResponseCacher {
+    cached: Option<CachedResponse>,
+    staleness: Duration,
+}
+
+impl ResponseCacher {
+    pub fn new(staleness: Duration) -> Self {
+        ResponseCacher {
+            staleness: staleness,
+            cached: None,
+        }
+    }
+}
+
+impl ResponseCacher {
+    pub fn get(&self, when: Instant) -> Option<&CachedResponse> {
+        match &self.cached {
+            None => None,
+            Some(response) => {
+                if let Some(when_minus_staleness) = when.checked_sub(self.staleness) {
+                    if response.saved_at > when_minus_staleness {
+                        Some(response)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn put(
+        &mut self,
+        status: StatusCode,
+        headers: http::HeaderMap,
+        contents: String,
+        at_: Instant,
+    ) {
+        self.cached = Some(CachedResponse {
+            saved_at: at_,
+            status,
+            headers,
+            contents,
+        })
     }
 }

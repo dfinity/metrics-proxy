@@ -12,7 +12,6 @@ use hyper_rustls::TlsAcceptor;
 use rustls;
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use tower_http;
 
 #[derive(Debug)]
@@ -92,13 +91,6 @@ impl Server {
         }
     }
 
-    // FIXME: wholepage caching to be implemented, only
-    // for valid 200 OK responses, as a layer of the method
-    // router rather than at the top level app router.
-    // This caching layer should not apply to Prometheus metrics serving.
-    // May want to use sister of map_response called map_request
-    // https://docs.rs/axum/latest/axum/middleware/fn.map_response.html
-
     /// Starts an HTTP or HTTPS server on the configured host and port,
     /// proxying requests to each one of the targets defined in the
     /// `handlers` of the `HttpProxy` config.
@@ -107,8 +99,8 @@ impl Server {
     /// * `StartError` is returned if the server fails to start.
     pub async fn serve(self) -> Result<(), StartError> {
         // Short helper to issue backend request.
-        async fn handle_with_proxy(
-            State(proxy): State<Arc<proxy::MetricsProxier>>,
+        async fn handle_with_cacheable_proxy(
+            State(proxy): State<proxy::CachedMetricsProxier>,
             headers: http::HeaderMap,
         ) -> (StatusCode, http::HeaderMap, std::string::String) {
             proxy.handle(headers).await
@@ -136,10 +128,14 @@ impl Server {
         router = match self.config {
             ServerKind::PrometheusMetricsProxy(config) => {
                 for (path, target) in config.handlers.clone() {
-                    let state = Arc::new(proxy::MetricsProxier::from(target));
+                    let cache_duration = target.clone().cache_duration;
+                    let state = proxy::CachedMetricsProxier::from(
+                        proxy::MetricsProxier::from(target),
+                        cache_duration.into(),
+                    );
                     router = router.route(
                         path.as_str(),
-                        get(handle_with_proxy)
+                        get(handle_with_cacheable_proxy)
                             .with_state(state)
                             .layer(tower::ServiceBuilder::new().layer(bodytimeout.clone())),
                     );
