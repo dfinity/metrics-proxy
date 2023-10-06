@@ -329,30 +329,62 @@ impl MetricsProxier {
 }
 
 /// The metrics cacher caches responses from the metrics proxier.
+///
+/// FIXME: the ResponseCacher must cache by header set, to prevent
+/// authenticated responses from being served to unauthenticated
+/// clients.  Caching headers line If-None-Match should be ignored.
+///
+/// FIXME: rename to cache_processed_response
 #[derive(Clone)]
 pub struct CachedMetricsProxier {
     proxier: MetricsProxier,
     cache: Arc<RwLock<ResponseCacher>>,
+    staleness: Duration,
+    zero_duration: Duration,
 }
 
 impl CachedMetricsProxier {
     pub fn from(proxier: MetricsProxier, staleness: Duration) -> Self {
+        let zero_duration = Duration::new(0, 0);
         CachedMetricsProxier {
             proxier,
             cache: Arc::new(RwLock::new(ResponseCacher::new(staleness))),
+            staleness,
+            zero_duration,
         }
     }
 
     pub async fn handle(&self, headers: http::HeaderMap) -> (StatusCode, http::HeaderMap, String) {
-        let now = std::time::Instant::now();
+        if self.staleness > self.zero_duration {
+            self.handle_with_cache(headers).await
+        } else {
+            self.handle_without_cache(headers).await
+        }
+    }
+
+    async fn handle_without_cache(
+        &self,
+        headers: http::HeaderMap,
+    ) -> (StatusCode, http::HeaderMap, String) {
+        self.proxier.handle(headers).await
+        //(StatusCode::OK, http::HeaderMap::new(), "".to_string())
+    }
+
+    async fn handle_with_cache(
+        &self,
+        headers: http::HeaderMap,
+    ) -> (StatusCode, http::HeaderMap, String) {
         // Check that the cache is up-to-date.
-        let cache = self.cache.write().await;
-        match cache.get(now) {
-            Some(cached) => (
-                cached.status,
-                cached.headers.clone(),
-                cached.contents.clone(),
-            ),
+        let cache = self.cache.read().await;
+        let now = std::time::Instant::now();
+        let (s, h, c) = match cache.get(now) {
+            Some(cached) => {
+                (
+                    cached.status,
+                    cached.headers.clone(),
+                    cached.contents.clone(),
+                )
+            }
             None => {
                 // Prepare to tentatively update the cache.
                 drop(cache);
@@ -365,13 +397,18 @@ impl CachedMetricsProxier {
                 // with one of them updating the cache before the
                 // others succeeded in grabbing the lock.
                 match cache.get(now) {
-                    Some(cached) => (
-                        cached.status,
-                        cached.headers.clone(),
-                        cached.contents.clone(),
-                    ),
+                    Some(cached) => {
+                        (
+                            cached.status,
+                            cached.headers.clone(),
+                            cached.contents.clone(),
+                        )
+                    }
                     None => {
                         let (status, headers, contents) = self.proxier.handle(headers).await;
+                        let now = std::time::Instant::now();
+                        //let (status, headers, contents) =
+                        //    (StatusCode::OK, http::HeaderMap::new(), "".to_string());
                         if status.is_success() {
                             cache.put(status, headers.clone(), contents.clone(), now);
                         };
@@ -379,7 +416,8 @@ impl CachedMetricsProxier {
                     }
                 }
             }
-        }
+        };
+        (s, h, c)
     }
 }
 
