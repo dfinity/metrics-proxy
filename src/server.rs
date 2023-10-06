@@ -1,4 +1,5 @@
 use crate::config::{self, HttpProxy, ListenerSpec};
+use crate::metrics::CustomMetrics;
 use crate::proxy;
 use axum::extract::State;
 use axum::http;
@@ -106,6 +107,9 @@ impl Server {
             proxy.handle(headers).await
         }
 
+        // Initialize the custom metrics table used everywhere.
+        let metrics_table = CustomMetrics::new();
+
         // Short helper to map 408 from request response timeout layer to 504.
         async fn gateway_timeout<B>(
             mut response: axum::response::Response<B>,
@@ -131,6 +135,7 @@ impl Server {
                     let cache_duration = target.clone().cache_duration;
                     let state = proxy::CachedMetricsProxier::from(
                         proxy::MetricsProxier::from(target),
+                        metrics_table.clone(),
                         cache_duration.into(),
                     );
                     router = router.route(

@@ -12,5 +12,20 @@ proxies:
           - reduce_time_resolution:
               resolution: 5s
           - keep
+    cache_duration: 1s
+  - listen_on:
+      url: http://0.0.0.0:18080/proxy2
+    connect_to:
+      url: http://localhost:9100/metrics
+    label_filters:
+      - regex: .*
+        actions:
+          - drop
+      - regex: node_cpu_.*
+        actions:
+          - reduce_time_resolution:
+              resolution: 5s
+          - keep
+    cache_duration: 1s
 metrics:
   url: http://127.0.0.1:18081/metrics

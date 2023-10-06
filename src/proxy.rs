@@ -1,8 +1,10 @@
 use crate::config::HttpProxyTarget;
-use crate::{cache::ResponseCacher, cache::SampleCacheStore, client, config};
+use crate::metrics::CustomMetrics;
+use crate::{cache::DeadlineCacher, cache::SampleCacheStore, client, config};
 use axum::http;
 use axum::http::StatusCode;
 use itertools::Itertools;
+use opentelemetry::KeyValue;
 use prometheus_parse::{self, Sample};
 use reqwest::header;
 use std::collections::HashMap;
@@ -10,7 +12,6 @@ use std::f64;
 use std::iter::zip;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::RwLock;
 
 // Headers that must not be relayed from backend to client or vice versa.
 static HOPBYHOP: [&str; 8] = [
@@ -231,6 +232,14 @@ impl MetricsProxier {
     // FIXME: perhaps we need a completely separate module just for filtering.
     // Or consider making this into a Tower layer.  This is harder but it
     // should simplify the code enormously.
+    // To hook it up as a layer, in server.rs, tack layer after:
+    //    router = router.route(
+    //        path.as_str(),
+    //        get(handle_with_cacheable_proxy)
+    //            .with_state(state)
+    //            .layer(tower::ServiceBuilder::new().layer(bodytimeout.clone())),
+    // Base the layer code on lib.rs from axum-otel-metrics, and study how
+    // Tower layers are made.
     fn apply_filters(&self, series: prometheus_parse::Scrape) -> prometheus_parse::Scrape {
         fn label_value(
             metric: &String,
@@ -328,27 +337,40 @@ impl MetricsProxier {
     }
 }
 
-/// The metrics cacher caches responses from the metrics proxier.
-///
-/// FIXME: the ResponseCacher must cache by header set, to prevent
-/// authenticated responses from being served to unauthenticated
-/// clients.  Caching headers line If-None-Match should be ignored.
-///
-/// FIXME: rename to cache_processed_response
 #[derive(Clone)]
+struct CachedResponse {
+    pub status: StatusCode,
+    pub headers: http::HeaderMap,
+    pub contents: String,
+}
+
+// FIXME: maybe convert to a Tower layer.
+
+#[derive(Clone)]
+/// The metrics cacher caches responses from the metrics proxier.
+/// It only caches successful responses.  The rest are passed through.
+/// What's more -- the Authorization and Proxy-Authorization
+/// headers are handled specially, to ensure that the cache
+/// will not serve authorized pages to unauthorized users.
 pub struct CachedMetricsProxier {
     proxier: MetricsProxier,
-    cache: Arc<RwLock<ResponseCacher>>,
+    metrics_table: CustomMetrics,
+    cache: DeadlineCacher<CachedResponse>,
     staleness: Duration,
     zero_duration: Duration,
 }
 
 impl CachedMetricsProxier {
-    pub fn from(proxier: MetricsProxier, staleness: Duration) -> Self {
+    pub fn from(
+        proxier: MetricsProxier,
+        metrics_table: CustomMetrics,
+        staleness: Duration,
+    ) -> Self {
         let zero_duration = Duration::new(0, 0);
         CachedMetricsProxier {
             proxier,
-            cache: Arc::new(RwLock::new(ResponseCacher::new(staleness))),
+            metrics_table,
+            cache: DeadlineCacher::new(staleness),
             staleness,
             zero_duration,
         }
@@ -375,49 +397,44 @@ impl CachedMetricsProxier {
         headers: http::HeaderMap,
     ) -> (StatusCode, http::HeaderMap, String) {
         // Check that the cache is up-to-date.
-        let cache = self.cache.read().await;
-        let now = std::time::Instant::now();
-        let (s, h, c) = match cache.get(now) {
-            Some(cached) => {
-                (
-                    cached.status,
-                    cached.headers.clone(),
-                    cached.contents.clone(),
-                )
-            }
-            None => {
-                // Prepare to tentatively update the cache.
-                drop(cache);
-                let mut cache = self.cache.write().await;
-                // Check if the cache was updated by another writer.
-                // If it was, then simply serve the cached response.
-                // This could have happened because multiple threads
-                // concluded that the cache was stale almost at the
-                // same time, and decided to step into this branch,
-                // with one of them updating the cache before the
-                // others succeeded in grabbing the lock.
-                match cache.get(now) {
-                    Some(cached) => {
-                        (
-                            cached.status,
-                            cached.headers.clone(),
-                            cached.contents.clone(),
-                        )
-                    }
-                    None => {
-                        let (status, headers, contents) = self.proxier.handle(headers).await;
-                        let now = std::time::Instant::now();
-                        //let (status, headers, contents) =
-                        //    (StatusCode::OK, http::HeaderMap::new(), "".to_string());
-                        if status.is_success() {
-                            cache.put(status, headers.clone(), contents.clone(), now);
-                        };
-                        (status, headers, contents)
-                    }
-                }
-            }
-        };
-        (s, h, c)
+        let cache_key = format!(
+            "{:?}\n{:?}",
+            headers.get("Authorization"),
+            headers.get("Proxy-Authorization")
+        );
+
+        async fn handle_async(
+            proxier: &MetricsProxier,
+            headers: http::HeaderMap,
+        ) -> (CachedResponse, bool) {
+            let (status, headers, contents) = proxier.handle(headers).await;
+            (
+                CachedResponse {
+                    status,
+                    headers,
+                    contents,
+                },
+                status.is_success(),
+            )
+        }
+
+        let cache = &self.cache;
+        let (arced, cached) = cache
+            .get_or_insert_with(cache_key, handle_async(&self.proxier, headers))
+            .await;
+        match cached {
+            true => &self.metrics_table.http_cache_hits,
+            false => &self.metrics_table.http_cache_misses,
+        }
+        .add(
+            1,
+            &[KeyValue::new(
+                "http_response_status_code",
+                arced.status.clone().to_string(),
+            )],
+        );
+
+        (arced.status, arced.headers.clone(), arced.contents.clone())
     }
 }
 

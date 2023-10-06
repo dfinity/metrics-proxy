@@ -3,10 +3,11 @@
 /// This file contains caching primitives for both the code that filters and
 /// reduces time resolution of metrics, as well as the code that deals with
 /// post-processed HTTP responses from backends.
-use axum::http;
-use axum::http::StatusCode;
 use std::collections::HashMap;
+use std::future::Future;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 use itertools::Itertools;
 use prometheus_parse::Sample;
@@ -94,57 +95,83 @@ impl SampleCacheStore {
     }
 }
 
-pub struct CachedResponse {
-    saved_at: Instant,
-    pub status: StatusCode,
-    pub headers: http::HeaderMap,
-    pub contents: String,
-}
-
-pub struct ResponseCacher {
-    cached: Option<CachedResponse>,
+// FIXME: implement asynchronous cache eviction.
+#[derive(Clone)]
+/// Multi-threaded, generic cache for future results.
+/// During optimistic caching case, it takes less than 1% of CPU
+/// to perform the bookkeeping overhead that the cache creates.
+pub struct DeadlineCacher<T: Sized> {
+    variants: Arc<RwLock<HashMap<String, Arc<RwLock<Option<(Instant, Arc<T>)>>>>>>,
     staleness: Duration,
 }
 
-impl ResponseCacher {
+impl<T> DeadlineCacher<T> {
     pub fn new(staleness: Duration) -> Self {
-        ResponseCacher {
+        DeadlineCacher {
+            variants: Arc::new(RwLock::new(HashMap::new())),
             staleness: staleness,
-            cached: None,
         }
     }
-}
 
-impl ResponseCacher {
-    pub fn get(&self, when: Instant) -> Option<&CachedResponse> {
-        match &self.cached {
-            None => None,
-            Some(response) => {
-                if let Some(when_minus_staleness) = when.checked_sub(self.staleness) {
-                    if response.saved_at > when_minus_staleness {
-                        Some(response)
-                    } else {
-                        None
+    /// Get a cached item based on a cache key, or if not cached,
+    /// use a future that returns a tuple (T, cached) indicating
+    /// if the instance of T should be cached or not.
+    ///
+    /// Returns a tuple (Arc<T>, bool) where the boolean indicates
+    /// if the result was from cache or not.
+    pub async fn get_or_insert_with(
+        &self,
+        cache_key: String,
+        fut: impl Future<Output = (T, bool)>,
+    ) -> (Arc<T>, bool) {
+        let read_hashmap = self.variants.clone();
+        let read_hashmap_locked = read_hashmap.read().await;
+
+        let now = std::time::Instant::now();
+        // Check the cache as reader first.
+        if let Some(item_lock) = &read_hashmap_locked.get(&cache_key).clone() {
+            let val = item_lock.read().await;
+            if val.is_some() {
+                // Guard has a value.  Let's see if it's fresh.
+                let (saved_at, item) = val.clone().unwrap();
+                if let Some(when_minus_staleness) = now.checked_sub(self.staleness) {
+                    if saved_at > when_minus_staleness {
+                        return (item, true);
                     }
-                } else {
-                    None
                 }
             }
-        }
-    }
+        };
 
-    pub fn put(
-        &mut self,
-        status: StatusCode,
-        headers: http::HeaderMap,
-        contents: String,
-        at_: Instant,
-    ) {
-        self.cached = Some(CachedResponse {
-            saved_at: at_,
-            status,
-            headers,
-            contents,
-        })
+        // We did not find it in the cache, or the guard was
+        // empty.  Drop the read lock and prepare to grab the
+        // write one in order to put the value in the hashmap.
+        drop(read_hashmap_locked);
+        drop(read_hashmap);
+
+        let write_hashmap = self.variants.clone();
+        let mut write_hashmap_locked = write_hashmap.write().await;
+
+        // Write tombstone into hashmap.
+        let entry_guard = Arc::new(RwLock::new(None));
+        let mut item_locked_for_write = entry_guard.write().await;
+        write_hashmap_locked.insert(cache_key.clone(), entry_guard.clone());
+        drop(write_hashmap_locked);
+        drop(write_hashmap);
+
+        // No cache hit.  Fetch and cache if the fetcher function
+        // returns true as part of its return tuple.  Fetching
+        // is accomplished by actually running the future, which
+        // is otherwise left unrun and dropped if not used.
+        let (item3, cache_it) = fut.await;
+        let now: Instant = std::time::Instant::now();
+        let arced = Arc::new(item3);
+        if cache_it == true {
+            // Save into cache *only* if cache_it is true.
+            // Otherwise leave the empty None guard in place.
+            *item_locked_for_write = Some((now, arced.clone()));
+        };
+        drop(item_locked_for_write);
+
+        (arced, false)
     }
 }
