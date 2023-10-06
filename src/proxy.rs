@@ -228,6 +228,8 @@ impl MetricsProxier {
     }
 
     // FIXME: perhaps we need a completely separate module just for filtering.
+    // Or consider making this into a Tower layer.  This is harder but it
+    // should simplify the code enormously.
     fn apply_filters(&self, series: prometheus_parse::Scrape) -> prometheus_parse::Scrape {
         fn label_value(
             metric: &String,
