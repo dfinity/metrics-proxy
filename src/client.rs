@@ -1,3 +1,6 @@
+use std::str::Utf8Error;
+
+use hyper::body::Bytes;
 use prometheus_parse;
 use reqwest;
 use reqwest::header;
@@ -6,7 +9,7 @@ use reqwest::header;
 pub struct HttpError {
     pub status: reqwest::StatusCode,
     pub headers: header::HeaderMap,
-    pub data: String,
+    pub data: Bytes,
 }
 
 pub struct ScrapeResult {
@@ -19,6 +22,7 @@ pub enum ScrapeError {
     Non200(HttpError),
     FetchError(reqwest::Error),
     ParseError(std::io::Error),
+    DecodeError(Utf8Error),
 }
 
 impl From<reqwest::Error> for ScrapeError {
@@ -30,6 +34,12 @@ impl From<reqwest::Error> for ScrapeError {
 impl From<std::io::Error> for ScrapeError {
     fn from(err: std::io::Error) -> Self {
         ScrapeError::ParseError(err)
+    }
+}
+
+impl From<Utf8Error> for ScrapeError {
+    fn from(err: Utf8Error) -> Self {
+        ScrapeError::DecodeError(err)
     }
 }
 
@@ -57,19 +67,22 @@ pub async fn scrape(
         .await?;
     let status = response.status();
     let headers = response.headers().clone();
-    let text = response.text().await?;
+    let data = response.bytes().await?;
     if status != reqwest::StatusCode::OK {
         return Err(ScrapeError::Non200(HttpError {
             status,
             headers,
-            data: text,
+            data: data,
         }));
     }
-    match prometheus_parse::Scrape::parse(text.lines().map(|s| Ok(s.to_owned()))) {
-        Ok(parsed) => Ok(ScrapeResult {
-            headers,
-            series: parsed,
-        }),
-        Err(err) => Err(ScrapeError::ParseError(err)),
+    match std::str::from_utf8(data.as_ref()) {
+        Ok(text) => match prometheus_parse::Scrape::parse(text.lines().map(|s| Ok(s.to_owned()))) {
+            Ok(parsed) => Ok(ScrapeResult {
+                headers,
+                series: parsed,
+            }),
+            Err(err) => Err(ScrapeError::ParseError(err)),
+        },
+        Err(err) => Err(ScrapeError::DecodeError(err)),
     }
 }

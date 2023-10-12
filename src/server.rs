@@ -8,6 +8,7 @@ use axum::middleware::map_response;
 use axum::{routing::get, Router};
 use axum_otel_metrics::HttpMetricsLayer;
 use hyper;
+use hyper::body::Bytes;
 use hyper::server::conn::AddrIncoming;
 use hyper_rustls::TlsAcceptor;
 use rustls;
@@ -103,7 +104,7 @@ impl Server {
         async fn handle_with_cacheable_proxy(
             State(proxy): State<proxy::CachedMetricsProxier>,
             headers: http::HeaderMap,
-        ) -> (StatusCode, http::HeaderMap, std::string::String) {
+        ) -> (StatusCode, http::HeaderMap, Bytes) {
             proxy.handle(headers).await
         }
 

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use itertools::Itertools;
 use prometheus_parse::Sample;
@@ -95,20 +95,20 @@ impl SampleCacheStore {
     }
 }
 
-// FIXME: implement asynchronous cache eviction.
+// FIXME: make this into a Tower service.
 #[derive(Clone)]
 /// Multi-threaded, generic cache for future results.
 /// During optimistic caching case, it takes less than 1% of CPU
 /// to perform the bookkeeping overhead that the cache creates.
-pub struct DeadlineCacher<T: Sized> {
-    variants: Arc<RwLock<HashMap<String, Arc<RwLock<Option<(Instant, Arc<T>)>>>>>>,
+pub struct DeadlineCacher<Y: Sized + 'static> {
+    variants: Arc<Mutex<HashMap<String, Arc<RwLock<Option<Arc<Y>>>>>>>,
     staleness: Duration,
 }
 
-impl<T> DeadlineCacher<T> {
+impl<Y: Sync + Send> DeadlineCacher<Y> {
     pub fn new(staleness: Duration) -> Self {
         DeadlineCacher {
-            variants: Arc::new(RwLock::new(HashMap::new())),
+            variants: Arc::new(Mutex::new(HashMap::new())),
             staleness: staleness,
         }
     }
@@ -117,60 +117,65 @@ impl<T> DeadlineCacher<T> {
     /// use a future that returns a tuple (T, cached) indicating
     /// if the instance of T should be cached or not.
     ///
-    /// Returns a tuple (Arc<T>, bool) where the boolean indicates
+    /// Returns a tuple (Arc<Y>, bool) where the boolean indicates
     /// if the result was from cache or not.
     pub async fn get_or_insert_with(
         &self,
         cache_key: String,
-        fut: impl Future<Output = (T, bool)>,
-    ) -> (Arc<T>, bool) {
-        let read_hashmap = self.variants.clone();
-        let read_hashmap_locked = read_hashmap.read().await;
+        fut: impl Future<Output = (Y, bool)>,
+    ) -> (Arc<Y>, bool) {
+        let hashmap = self.variants.clone();
+        let mut locked_hashmap = hashmap.lock().await;
 
-        let now = std::time::Instant::now();
         // Check the cache as reader first.
-        if let Some(item_lock) = &read_hashmap_locked.get(&cache_key).clone() {
-            let val = item_lock.read().await;
-            if val.is_some() {
-                // Guard has a value.  Let's see if it's fresh.
-                let (saved_at, item) = val.clone().unwrap();
-                if let Some(when_minus_staleness) = now.checked_sub(self.staleness) {
-                    if saved_at > when_minus_staleness {
-                        return (item, true);
-                    }
-                }
+        if let Some(item_lock) = locked_hashmap.get(&cache_key).clone() {
+            let guard = item_lock.read().await;
+            // The following item will always be Some() for pages that were
+            // cacheable in the past.  If the page wasn't cacheable at the
+            // last request, this will be None and we will proceed below.
+            // The entry guard exists solely so that other requests not hitting
+            // the same cache key can proceed in parallel without full contention
+            // on the cache hashmap itself.
+            if let Some(cached_value) = guard.clone() {
+                // Cache has an entry guard, and entry guard has a value.
+                return (cached_value, true);
             }
-        };
+        }
 
-        // We did not find it in the cache, or the guard was
-        // empty.  Drop the read lock and prepare to grab the
-        // write one in order to put the value in the hashmap.
-        drop(read_hashmap_locked);
-        drop(read_hashmap);
-
-        let write_hashmap = self.variants.clone();
-        let mut write_hashmap_locked = write_hashmap.write().await;
-
-        // Write tombstone into hashmap.
+        // We did not find it in the cache (it's not cached)
+        // Write the entry guard into the cache, then.
+        // lock the entry guard and unlock the cache.
         let entry_guard = Arc::new(RwLock::new(None));
-        let mut item_locked_for_write = entry_guard.write().await;
-        write_hashmap_locked.insert(cache_key.clone(), entry_guard.clone());
-        drop(write_hashmap_locked);
-        drop(write_hashmap);
+        let mut locked_entry_guard = entry_guard.write().await;
+        locked_hashmap.insert(cache_key.clone(), entry_guard.clone());
+        drop(locked_hashmap);
 
-        // No cache hit.  Fetch and cache if the fetcher function
-        // returns true as part of its return tuple.  Fetching
-        // is accomplished by actually running the future, which
-        // is otherwise left unrun and dropped if not used.
+        // Fetch and cache if the fetcher function returns true
+        // as part of its return tuple.  Fetching is accomplished
+        // by actually running the future, which is otherwise left
+        // unrun and dropped (therefore canceled) if not used.
         let (item3, cache_it) = fut.await;
-        let now: Instant = std::time::Instant::now();
         let arced = Arc::new(item3);
         if cache_it == true {
             // Save into cache *only* if cache_it is true.
             // Otherwise leave the empty None guard in place.
-            *item_locked_for_write = Some((now, arced.clone()));
+            *locked_entry_guard = Some(arced.clone());
         };
-        drop(item_locked_for_write);
+
+        // Now, schedule the asynchronous removal of the cached
+        // item from the hashmap.
+        let staleness = self.staleness.clone();
+        let variants = self.variants.clone();
+        tokio::task::spawn(async move {
+            tokio::time::sleep(staleness).await;
+            let mut write_hashmap = variants.lock().await;
+            write_hashmap.remove(&cache_key);
+            drop(write_hashmap);
+        });
+
+        // Now unlock the entry guard altogether.  Other threads
+        // trying to access the same cache key can proceed.
+        drop(locked_entry_guard);
 
         (arced, false)
     }
