@@ -1,3 +1,5 @@
 /target
 /*.svg
 perf.data*
+metrics
+heaptrack*.zst
