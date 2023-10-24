@@ -29,6 +29,10 @@ prometheus = { version = "0.13.3", features = ["process"] }
 lazy_static = "1.4.0"
 axum-otel-metrics = { git = "https://github.com/DFINITYManu/axum-otel-metrics.git", rev = "c93e2d4efdf1503ee98e60294712b4ac7942160a" }
 opentelemetry = { version = "0.20.0", features = ["metrics"] }
+http = "0.2.9"
+pin-project-lite = "0.2.13"
+futures-util = "0.3.28"
+http-body = "0.4.5"
 
 [[bin]]
 name = "metrics-proxy"

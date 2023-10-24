@@ -2,12 +2,12 @@ use opentelemetry::global;
 use opentelemetry::metrics::Counter;
 
 #[derive(Clone)]
-pub struct CustomMetrics {
+pub struct CacheMetrics {
     pub http_cache_misses: Counter<u64>,
     pub http_cache_hits: Counter<u64>,
 }
 
-impl CustomMetrics {
+impl CacheMetrics {
     pub fn new() -> Self {
         let meter = global::meter("axum-app");
         // Create two instruments.
@@ -19,7 +19,7 @@ impl CustomMetrics {
             .u64_counter("http.cache.hits")
             .with_description("Total number of HTTP cache hits")
             .init();
-        CustomMetrics {
+        CacheMetrics {
             http_cache_misses,
             http_cache_hits,
         }

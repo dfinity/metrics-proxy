@@ -1,16 +1,30 @@
+use http::Request;
+use http_body;
+use http_body::Body;
+
+use futures_util::FutureExt;
+use hyper::Response;
+use itertools::Itertools;
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant};
+use tokio::sync::{Mutex, RwLock};
+use tower::{Layer, Service};
+
+use crate::metrics::CacheMetrics;
+use axum::http;
+use hyper::body::Bytes;
+use opentelemetry::KeyValue;
+use prometheus_parse::{self, Sample};
+
 /// Caching primitives used by metrics-proxy.
 ///
 /// This file contains caching primitives for both the code that filters and
 /// reduces time resolution of metrics, as well as the code that deals with
 /// post-processed HTTP responses from backends.
-use std::collections::HashMap;
-use std::future::Future;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, RwLock};
-
-use itertools::Itertools;
-use prometheus_parse::Sample;
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 struct LabelPair {
@@ -96,7 +110,7 @@ impl SampleCacheStore {
 }
 
 // FIXME: make this into a Tower service.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 /// Multi-threaded, generic cache for future results.
 /// During optimistic caching case, it takes less than 1% of CPU
 /// to perform the bookkeeping overhead that the cache creates.
@@ -178,5 +192,159 @@ impl<Y: Sync + Send> DeadlineCacher<Y> {
         drop(locked_entry_guard);
 
         (arced, false)
+    }
+}
+
+#[derive(Clone)]
+pub struct CacheLayer {
+    cacher: DeadlineCacher<CachedResponse>,
+}
+
+impl CacheLayer {
+    pub fn new(staleness: Duration) -> Self {
+        CacheLayer {
+            cacher: DeadlineCacher::new(staleness),
+        }
+    }
+}
+
+impl<S> Layer<S> for CacheLayer {
+    type Service = CacheService<S>;
+
+    fn layer(&self, service: S) -> Self::Service {
+        CacheService {
+            cacher: self.cacher.clone(),
+            metrics: CacheMetrics::new(),
+            inner: service,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CachedResponse {
+    version: http::Version,
+    status: http::StatusCode,
+    headers: http::HeaderMap,
+    contents: Bytes,
+}
+
+#[derive(Clone)]
+pub struct CacheService<S> {
+    cacher: DeadlineCacher<CachedResponse>,
+    metrics: CacheMetrics,
+    inner: S,
+}
+
+// https://docs.rs/tower/latest/tower/trait.Service.html#server
+// https://docs.rs/tower/latest/tower/trait.Service.html#backpressure
+impl<S> Service<Request<axum::body::Body>> for CacheService<S>
+where
+    S: Service<Request<axum::body::Body>, Response = Response<axum::body::BoxBody>>
+        + std::marker::Send
+        + 'static,
+    S::Error: Into<Box<dyn std::error::Error>>,
+    S::Error: std::fmt::Debug,
+    S::Error: std::marker::Send,
+    <S as Service<http::Request<hyper::Body>>>::Future: std::marker::Send,
+{
+    type Error = S::Error;
+    type Response = Response<axum::body::BoxBody>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: Request<axum::body::Body>) -> Self::Future {
+        let reqversion = request.version();
+        let reqheaders = request.headers();
+        let frontend_label = format!(
+            "{}{}",
+            match reqheaders.get("host") {
+                Some(host) => match host.to_str() {
+                    Ok(hoststr) => hoststr,
+                    Err(_) => "invalid-hostname",
+                },
+                None => "no-hostname",
+            },
+            request.uri()
+        );
+        let cache_key = format!(
+            "{}\n{:?}\n{:?}",
+            request.uri(),
+            reqheaders.get("Authorization"),
+            reqheaders.get("Proxy-Authorization")
+        );
+        let client_call = self.inner.call(request);
+        let cacher = self.cacher.clone();
+        let metrics = self.metrics.clone();
+
+        let fut = async move {
+            fn badresp(version: http::Version, reason: String) -> (CachedResponse, bool) {
+                (
+                    CachedResponse {
+                        version: version,
+                        status: http::StatusCode::INTERNAL_SERVER_ERROR,
+                        headers: http::HeaderMap::new(),
+                        contents: reason.into(),
+                    },
+                    false,
+                )
+            }
+            match client_call.await {
+                Err(e) => badresp(
+                    reqversion,
+                    format!("Proxy error downstream from cacher: {:?}", e).to_string(),
+                ),
+                Ok(res) => {
+                    let (parts, body) = res.into_parts();
+                    match hyper::body::to_bytes(body).await {
+                        Err(e) => badresp(
+                            parts.version,
+                            format!("Proxy error fetching body: {:?}", e).to_string(),
+                        ),
+                        Ok(data) => (
+                            CachedResponse {
+                                version: parts.version,
+                                status: parts.status,
+                                headers: parts.headers,
+                                contents: data,
+                            },
+                            parts.status.is_success(),
+                        ),
+                    }
+                }
+            }
+        };
+
+        async move {
+            let (res, cached) = cacher.get_or_insert_with(cache_key, fut).await;
+
+            // Note the caching status of the returned page.
+            match cached {
+                true => metrics.http_cache_hits,
+                false => metrics.http_cache_misses,
+            }
+            .add(
+                1,
+                &[
+                    KeyValue::new("http_response_status_code", res.status.as_str().to_string()),
+                    KeyValue::new("frontend", frontend_label),
+                ],
+            );
+
+            // Formulate a response based on the returned page.
+            let mut respb = http::response::Response::builder().version(res.version);
+            let headers = respb.headers_mut().unwrap();
+            headers.extend(res.headers.clone());
+            let resp = respb
+                .status(res.status)
+                .body(axum::body::BoxBody::new(
+                    axum::body::Full::new(res.contents.clone()).map_err(axum::Error::new),
+                ))
+                .unwrap();
+            Ok(resp)
+        }
+        .boxed()
     }
 }

@@ -1,5 +1,4 @@
 use crate::config::{self, HttpProxy, ListenerSpec};
-use crate::metrics::CustomMetrics;
 use crate::proxy;
 use axum::extract::State;
 use axum::http;
@@ -14,6 +13,7 @@ use hyper_rustls::TlsAcceptor;
 use rustls;
 use std::fmt;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tower_http;
 
 #[derive(Debug)]
@@ -101,15 +101,12 @@ impl Server {
     /// * `StartError` is returned if the server fails to start.
     pub async fn serve(self) -> Result<(), StartError> {
         // Short helper to issue backend request.
-        async fn handle_with_cacheable_proxy(
-            State(proxy): State<proxy::CachedMetricsProxier>,
+        async fn handle_with_proxy(
+            State(proxy): State<proxy::MetricsProxier>,
             headers: http::HeaderMap,
         ) -> (StatusCode, http::HeaderMap, Bytes) {
             proxy.handle(headers).await
         }
-
-        // Initialize the custom metrics table used everywhere.
-        let metrics_table = CustomMetrics::new();
 
         // Short helper to map 408 from request response timeout layer to 504.
         async fn gateway_timeout<B>(
@@ -134,17 +131,15 @@ impl Server {
             ServerKind::PrometheusMetricsProxy(config) => {
                 for (path, target) in config.handlers.clone() {
                     let cache_duration = target.clone().cache_duration;
-                    let state = proxy::CachedMetricsProxier::from(
-                        proxy::MetricsProxier::from(target),
-                        metrics_table.clone(),
-                        cache_duration.into(),
-                    );
-                    router = router.route(
-                        path.as_str(),
-                        get(handle_with_cacheable_proxy)
-                            .with_state(state)
-                            .layer(tower::ServiceBuilder::new().layer(bodytimeout.clone())),
-                    );
+                    let state = proxy::MetricsProxier::from(target);
+                    let mut method_router = get(handle_with_proxy)
+                        .with_state(state)
+                        .layer(tower::ServiceBuilder::new().layer(bodytimeout.clone()));
+                    if Duration::from(cache_duration) > Duration::new(0, 0) {
+                        method_router = method_router
+                            .layer(crate::cache::CacheLayer::new(cache_duration.into()));
+                    }
+                    router = router.route(path.as_str(), method_router);
                 }
                 router
             }

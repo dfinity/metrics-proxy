@@ -1,11 +1,9 @@
 use crate::config::HttpProxyTarget;
-use crate::metrics::CustomMetrics;
-use crate::{cache::DeadlineCacher, cache::SampleCacheStore, client, config};
+use crate::{cache::SampleCacheStore, client, config};
 use axum::http;
 use axum::http::StatusCode;
 use hyper::body::Bytes;
 use itertools::Itertools;
-use opentelemetry::KeyValue;
 use prometheus_parse::{self, Sample};
 use reqwest::header;
 use std::collections::HashMap;
@@ -340,107 +338,6 @@ impl MetricsProxier {
         }
 
         prometheus_parse::Scrape { docs, samples }
-    }
-}
-
-#[derive(Clone)]
-struct CachedResponse {
-    pub status: StatusCode,
-    pub headers: http::HeaderMap,
-    pub contents: Bytes,
-}
-
-// FIXME: maybe convert to a Tower layer.
-
-#[derive(Clone)]
-/// The metrics cacher caches responses from the metrics proxier.
-/// It only caches successful responses.  The rest are passed through.
-/// What's more -- the Authorization and Proxy-Authorization
-/// headers are handled specially, to ensure that the cache
-/// will not serve authorized pages to unauthorized users.
-pub struct CachedMetricsProxier {
-    proxier: MetricsProxier,
-    metrics_table: CustomMetrics,
-    cache: DeadlineCacher<CachedResponse>,
-    staleness: Duration,
-    zero_duration: Duration,
-}
-
-impl CachedMetricsProxier {
-    pub fn from(
-        proxier: MetricsProxier,
-        metrics_table: CustomMetrics,
-        staleness: Duration,
-    ) -> Self {
-        let zero_duration = Duration::new(0, 0);
-        CachedMetricsProxier {
-            proxier,
-            metrics_table,
-            cache: DeadlineCacher::new(staleness),
-            staleness,
-            zero_duration,
-        }
-    }
-
-    pub async fn handle(&self, headers: http::HeaderMap) -> (StatusCode, http::HeaderMap, Bytes) {
-        if self.staleness > self.zero_duration {
-            self.handle_with_cache(headers).await
-        } else {
-            self.handle_without_cache(headers).await
-        }
-    }
-
-    async fn handle_without_cache(
-        &self,
-        headers: http::HeaderMap,
-    ) -> (StatusCode, http::HeaderMap, Bytes) {
-        self.proxier.handle(headers).await
-        //(StatusCode::OK, http::HeaderMap::new(), "".to_string())
-    }
-
-    async fn handle_with_cache(
-        &self,
-        headers: http::HeaderMap,
-    ) -> (StatusCode, http::HeaderMap, Bytes) {
-        // Check that the cache is up-to-date.
-        let cache_key = format!(
-            "{:?}\n{:?}",
-            headers.get("Authorization"),
-            headers.get("Proxy-Authorization")
-        );
-
-        async fn handle_async(
-            proxier: &MetricsProxier,
-            headers: http::HeaderMap,
-        ) -> (CachedResponse, bool) {
-            let (status, headers, contents) = proxier.handle(headers).await;
-            (
-                CachedResponse {
-                    status,
-                    headers,
-                    contents,
-                },
-                status.is_success(),
-            )
-        }
-
-        let cache = &self.cache;
-        let (arced, cached) = cache
-            .get_or_insert_with(cache_key, handle_async(&self.proxier, headers))
-            .await;
-        match cached {
-            true => &self.metrics_table.http_cache_hits,
-            false => &self.metrics_table.http_cache_misses,
-        }
-        .add(
-            1,
-            &[KeyValue::new(
-                "http_response_status_code",
-                arced.status.clone().to_string(),
-            )],
-        );
-
-        (arced.status, arced.headers.clone(), arced.contents.clone())
     }
 }
 
