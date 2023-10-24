@@ -1,8 +1,7 @@
 use http::Request;
-use http_body;
-use http_body::Body;
 
 use futures_util::FutureExt;
+use hyper::body::HttpBody;
 use hyper::Response;
 use itertools::Itertools;
 use std::collections::HashMap;
