@@ -18,16 +18,16 @@ pub async fn run() {
     let mut set = JoinSet::new();
 
     let cfg = maybecfg.unwrap();
-    let mut telemetry = match cfg.metrics.clone() {
-        Some(listener) => Some((
+    let mut telemetry = cfg.metrics.clone().map(|listener| {
+        (
             listener,
             HttpMetricsLayerBuilder::new()
                 .with_service_name(env!("CARGO_PKG_NAME").to_string())
                 .with_service_version(env!("CARGO_PKG_VERSION").to_string())
                 .build(),
-        )),
-        None => None,
-    };
+        )
+    });
+
     let proxylist: Vec<metrics_proxy::config::HttpProxy> = cfg.into();
 
     for proxy in proxylist {

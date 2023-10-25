@@ -246,7 +246,7 @@ impl<S> Layer<S> for CacheLayer {
     fn layer(&self, service: S) -> Self::Service {
         CacheService {
             cacher: self.cacher.clone(),
-            metrics: CacheMetrics::new(),
+            metrics: CacheMetrics::default(),
             inner: service,
         }
     }

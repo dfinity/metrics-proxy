@@ -25,3 +25,9 @@ impl CacheMetrics {
         }
     }
 }
+
+impl Default for CacheMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}

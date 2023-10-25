@@ -72,7 +72,7 @@ pub async fn scrape(
         return Err(ScrapeError::Non200(HttpError {
             status,
             headers,
-            data: data,
+            data,
         }));
     }
     match std::str::from_utf8(data.as_ref()) {

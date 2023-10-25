@@ -600,13 +600,13 @@ impl From<Config> for Vec<HttpProxy> {
                     servers.insert(
                         serveraddr,
                         HttpProxy {
-                            listen_on: listen_on,
+                            listen_on,
                             handlers: newhandlers,
                         },
                     );
                 }
-                Some(oldserver) => match oldserver.handlers.get(&listen_on.handler) {
-                    None => {
+                Some(oldserver) => {
+                    if oldserver.handlers.get(&listen_on.handler).is_none() {
                         servers.insert(
                             serveraddr,
                             HttpProxy {
@@ -620,8 +620,7 @@ impl From<Config> for Vec<HttpProxy> {
                             },
                         );
                     }
-                    _ => (),
-                },
+                }
             }
         }
         servers.values().cloned().collect()
