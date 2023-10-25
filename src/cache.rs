@@ -112,6 +112,18 @@ impl SampleCacheStore {
 /// Multi-threaded, generic cache for future results.
 /// During optimistic caching case, it takes less than 1% of CPU
 /// to perform the bookkeeping overhead that the cache creates.
+///
+/// The cache is designed to hold the global cache mutex for as
+/// little time as possible (e.g. the backend request fetch is done
+/// with the global cache lock not held), so that parallel requests
+/// to multiple resources can proceed without lock contention.
+/// To ensure that parallel requests to the same resource are
+/// consolidated into a single backend request, there is an
+/// additional lock per resource, which is held for the duration
+/// of the backend request, so that when the fetch of the resource
+/// is done, all parallel readers of the same resource get served
+/// the results of the single request initiated by the first
+/// requestor.
 pub struct DeadlineCacher<Y: Sized + 'static> {
     variants: Arc<Mutex<HashMap<String, Arc<RwLock<Option<Arc<Y>>>>>>>,
     staleness: Duration,
@@ -130,37 +142,41 @@ impl<Y: Sync + Send> DeadlineCacher<Y> {
     /// if the instance of T should be cached or not.
     ///
     /// Returns a tuple (Arc<Y>, bool) where the boolean indicates
-    /// if the result was from cache or not.
-    ///
-    /// Designed to hold the global cache mutex for as little time
-    /// as possible (e.g. the request fetch is done with the global
-    /// cache lock not held).
+    /// if the result was from cache or not.  This boolean can be
+    /// used by the caller to do bookkeeping on cache effectiveness.
     pub async fn get_or_insert_with(
         &self,
         cache_key: String,
         fut: impl Future<Output = (Y, bool)>,
     ) -> (Arc<Y>, bool) {
         let hashmap = self.variants.clone();
+
+        // Lock the global cache.
         let mut locked_hashmap = hashmap.lock().await;
 
-        // Check the cache as reader first.
-        if let Some(item_lock) = locked_hashmap.get(&cache_key).clone() {
-            let guard = item_lock.read().await;
-            // The following item will always be Some() for pages that were
-            // cacheable in the past.  If the page wasn't cacheable at the
+        // Check the cache for an entry corresponding to a resource.
+        if let Some(entry) = locked_hashmap.get(&cache_key).clone() {
+            // There is an entry.  Lock it for read first.
+            let guard = entry.read().await;
+            // The following cached_value will always be Some() for pages that
+            // were cacheable in the past.  If the page wasn't cacheable at the
             // last request, this will be None and we will proceed below.
-            // The entry guard exists solely so that other requests not hitting
-            // the same cache key can proceed in parallel without full contention
-            // on the cache hashmap itself.
+            // The entry guard exists solely so that requests for the same cache
+            // key block as the request is proceeding, while enabling us to drop
+            // the global cache lock so that other requests hitting a different
+            // cache key can proceed in parallel without full contention on the
+            // global cache hashmap itself.
             if let Some(cached_value) = guard.clone() {
                 // Cache has an entry guard, and entry guard has a value.
+                // Return the value directly, and note it was cached.
                 return (cached_value, true);
             }
         }
 
         // We did not find it in the cache (it's not cached)
-        // Write the entry guard into the cache, then.
-        // lock the entry guard and unlock the cache.
+        // Write the entry guard corresponding to the cache key into the cache,
+        // then lock the entry guard and unlock the cache to permit other
+        // requests for different cache keys to proceed forward.
         let entry_guard = Arc::new(RwLock::new(None));
         let mut locked_entry_guard = entry_guard.write().await;
         locked_hashmap.insert(cache_key.clone(), entry_guard.clone());
@@ -190,14 +206,21 @@ impl<Y: Sync + Send> DeadlineCacher<Y> {
         });
 
         // Now unlock the entry guard altogether.  Other threads
-        // trying to access the same cache key can proceed.
+        // trying to access the same cache key can proceed and
+        // immediately get the result that will be returned to
+        // them at the beginning of this function (within the context
+        // of the read lock of the entry guard).
         drop(locked_entry_guard);
 
+        // Now return the value to the happy requestor that caused
+        // the backend fetch to begin with.
         (arced, false)
     }
 }
 
 #[derive(Clone)]
+// Tower layer for a request/response cache per
+// resource and authentication credentials.
 pub struct CacheLayer {
     cacher: DeadlineCacher<CachedResponse>,
 }
@@ -233,14 +256,16 @@ struct CachedResponse {
 }
 
 #[derive(Clone)]
+// Tower service implementation, used by CacheLayer, of
+// the request/response cache.  It uses the DeadlineCacher
+// structure to provide an asynchronous cache that coalesces
+// incoming requests designated as cacheable.
 pub struct CacheService<S> {
     cacher: DeadlineCacher<CachedResponse>,
     metrics: CacheMetrics,
     inner: S,
 }
 
-// https://docs.rs/tower/latest/tower/trait.Service.html#server
-// https://docs.rs/tower/latest/tower/trait.Service.html#backpressure
 impl<S> Service<Request<axum::body::Body>> for CacheService<S>
 where
     S: Service<Request<axum::body::Body>, Response = Response<axum::body::BoxBody>>
