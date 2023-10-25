@@ -221,6 +221,10 @@ fn default_request_response_timeout() -> DurationString {
     DurationString::new(df + Duration::new(5, 0))
 }
 
+fn default_cache_duration() -> DurationString {
+    DurationString::new(Duration::new(0, 0))
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 /// Specifies which host and port to listen on, and on which
@@ -412,6 +416,8 @@ struct ProxyEntry {
     listen_on: ListenerSpec,
     connect_to: ConnectTo,
     label_filters: Vec<LabelFilter>,
+    #[serde(default = "default_cache_duration")]
+    cache_duration: DurationString,
 }
 
 #[derive(Debug, Deserialize)]
@@ -559,7 +565,9 @@ impl TryFrom<PathBuf> for Config {
 pub struct HttpProxyTarget {
     pub connect_to: ConnectTo,
     pub label_filters: Vec<LabelFilter>,
+    pub cache_duration: DurationString,
 }
+
 #[derive(Debug, Clone)]
 pub struct HttpProxy {
     pub listen_on: ListenerSpec,
@@ -583,6 +591,7 @@ impl From<Config> for Vec<HttpProxy> {
                 HttpProxyTarget {
                     connect_to: proxy.connect_to,
                     label_filters: proxy.label_filters,
+                    cache_duration: proxy.cache_duration,
                 },
             )]);
 

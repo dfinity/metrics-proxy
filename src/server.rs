@@ -7,12 +7,13 @@ use axum::middleware::map_response;
 use axum::{routing::get, Router};
 use axum_otel_metrics::HttpMetricsLayer;
 use hyper;
+use hyper::body::Bytes;
 use hyper::server::conn::AddrIncoming;
 use hyper_rustls::TlsAcceptor;
 use rustls;
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::time::Duration;
 use tower_http;
 
 #[derive(Debug)]
@@ -92,13 +93,6 @@ impl Server {
         }
     }
 
-    // FIXME: wholepage caching to be implemented, only
-    // for valid 200 OK responses, as a layer of the method
-    // router rather than at the top level app router.
-    // This caching layer should not apply to Prometheus metrics serving.
-    // May want to use sister of map_response called map_request
-    // https://docs.rs/axum/latest/axum/middleware/fn.map_response.html
-
     /// Starts an HTTP or HTTPS server on the configured host and port,
     /// proxying requests to each one of the targets defined in the
     /// `handlers` of the `HttpProxy` config.
@@ -108,9 +102,9 @@ impl Server {
     pub async fn serve(self) -> Result<(), StartError> {
         // Short helper to issue backend request.
         async fn handle_with_proxy(
-            State(proxy): State<Arc<proxy::MetricsProxier>>,
+            State(proxy): State<proxy::MetricsProxier>,
             headers: http::HeaderMap,
-        ) -> (StatusCode, http::HeaderMap, std::string::String) {
+        ) -> (StatusCode, http::HeaderMap, Bytes) {
             proxy.handle(headers).await
         }
 
@@ -136,13 +130,16 @@ impl Server {
         router = match self.config {
             ServerKind::PrometheusMetricsProxy(config) => {
                 for (path, target) in config.handlers.clone() {
-                    let state = Arc::new(proxy::MetricsProxier::from(target));
-                    router = router.route(
-                        path.as_str(),
-                        get(handle_with_proxy)
-                            .with_state(state)
-                            .layer(tower::ServiceBuilder::new().layer(bodytimeout.clone())),
-                    );
+                    let cache_duration = target.clone().cache_duration;
+                    let state = proxy::MetricsProxier::from(target);
+                    let mut method_router = get(handle_with_proxy)
+                        .with_state(state)
+                        .layer(tower::ServiceBuilder::new().layer(bodytimeout.clone()));
+                    if Duration::from(cache_duration) > Duration::new(0, 0) {
+                        method_router = method_router
+                            .layer(crate::cache::CacheLayer::new(cache_duration.into()));
+                    }
+                    router = router.route(path.as_str(), method_router);
                 }
                 router
             }

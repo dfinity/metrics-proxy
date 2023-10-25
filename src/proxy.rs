@@ -2,6 +2,7 @@ use crate::config::HttpProxyTarget;
 use crate::{cache::SampleCacheStore, client, config};
 use axum::http;
 use axum::http::StatusCode;
+use hyper::body::Bytes;
 use itertools::Itertools;
 use prometheus_parse::{self, Sample};
 use reqwest::header;
@@ -132,7 +133,7 @@ fn render_sample(sample: &prometheus_parse::Sample) -> Vec<String> {
         .collect::<Vec<String>>()
 }
 
-fn render_scrape_data(scrape: &prometheus_parse::Scrape) -> String {
+fn render_scrape_data(scrape: &prometheus_parse::Scrape) -> Bytes {
     let mut help = scrape.docs.clone();
     let rendered = scrape
         .samples
@@ -168,7 +169,7 @@ fn render_scrape_data(scrape: &prometheus_parse::Scrape) -> String {
         .collect::<Vec<String>>()
         .join("\n")
         + "\n";
-    rendered
+    Bytes::from(rendered)
 }
 
 #[derive(Clone)]
@@ -192,7 +193,7 @@ impl From<HttpProxyTarget> for MetricsProxier {
 }
 
 impl MetricsProxier {
-    pub async fn handle(&self, headers: http::HeaderMap) -> (StatusCode, http::HeaderMap, String) {
+    pub async fn handle(&self, headers: http::HeaderMap) -> (StatusCode, http::HeaderMap, Bytes) {
         let clientheaders = safely_clone_request_headers(headers);
         let result =
             client::scrape(self.client.clone(), &self.target.connect_to, clientheaders).await;
@@ -206,7 +207,12 @@ impl MetricsProxier {
                 client::ScrapeError::ParseError(parseerror) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     fallback_headers(),
-                    format!("Error parsing output.\n\n{parseerror:#?}"),
+                    Bytes::from(format!("Error parsing output.\n\n{parseerror:#?}")),
+                ),
+                client::ScrapeError::DecodeError(decodeerror) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    fallback_headers(),
+                    Bytes::from(format!("Error decoding UTF-8 output.\n\n{decodeerror:#?}")),
                 ),
                 client::ScrapeError::FetchError(fetcherror) => {
                     let mut statuscode = StatusCode::BAD_GATEWAY;
@@ -216,7 +222,7 @@ impl MetricsProxier {
                         statuscode = StatusCode::GATEWAY_TIMEOUT;
                         errmsg = format!("The target is timing out.\n\n{fetcherror:#?}");
                     }
-                    (statuscode, fallback_headers(), errmsg)
+                    (statuscode, fallback_headers(), Bytes::from(errmsg))
                 }
             },
             Ok(parsed) => (
@@ -227,9 +233,6 @@ impl MetricsProxier {
         }
     }
 
-    // FIXME: perhaps we need a completely separate module just for filtering.
-    // Or consider making this into a Tower layer.  This is harder but it
-    // should simplify the code enormously.
     fn apply_filters(&self, series: prometheus_parse::Scrape) -> prometheus_parse::Scrape {
         fn label_value(
             metric: &String,
@@ -342,6 +345,7 @@ mod tests {
                 timeout: DurationString::new(Duration::new(5, 0)),
             },
             label_filters: filters,
+            cache_duration: DurationString::new(Duration::new(0, 0)),
         }
     }
 
@@ -356,7 +360,8 @@ mod tests {
 
     impl TestPayload {
         fn from_scrape(scrape: prometheus_parse::Scrape) -> Self {
-            let rendered = render_scrape_data(&scrape);
+            let chunk = render_scrape_data(&scrape);
+            let rendered = std::str::from_utf8(chunk.as_ref()).unwrap();
             let mut sorted_rendered: Vec<String> = rendered.lines().map(|s| s.to_owned()).collect();
             sorted_rendered.sort();
             let sorted_text = sorted_rendered.join("\n");

@@ -50,6 +50,13 @@ A dictionary that contains three key / value pairs:
 The proxy object determines where to listen on, where to fetch metrics from,
 and how the fetched metrics will be post-processed by the proxy.
 
+Optionally, a `cache_duration` can be specified (as a Rust duration string),
+which will cause successful metrics fetches from the backend (`connect_to`)
+to be cached for that duration of time.  Leaving the value absent will
+defeat the cache.  The cache respects different URI query strings and
+authorization headers so backends that generate different contents based
+on these headers and query strings will be cached correctly.
+
 ### `listener_spec`
 
 A dictionary that requires only one key: `url`.  Fragments and query
