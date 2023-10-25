@@ -67,6 +67,9 @@ struct SampleCacheEntry {
 }
 
 #[derive(Default)]
+/// Sample cache store.  Concurrent users of this structure are
+/// expected to wrap this in a lock and use it while locked.
+/// This structure is otherwise not concurrency-safe.
 pub struct SampleCacheStore {
     cache: HashMap<OrderedLabelSet, SampleCacheEntry>,
 }
@@ -114,7 +117,7 @@ type DeadlineCacherEntry<EntryT> = Arc<RwLock<Option<Arc<EntryT>>>>;
 
 #[derive(Debug, Clone)]
 /// Multi-threaded, generic cache for future results.
-/// During optimistic caching case, it takes less than 1% of CPU
+/// During optimistic caching case, it imposes minimal overhead
 /// to perform the bookkeeping overhead that the cache creates.
 ///
 /// The cache is designed to hold the global cache mutex for as
