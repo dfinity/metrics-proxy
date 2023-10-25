@@ -233,17 +233,6 @@ impl MetricsProxier {
         }
     }
 
-    // FIXME: perhaps we need a completely separate module just for filtering.
-    // Or consider making this into a Tower layer.  This is harder but it
-    // should simplify the code enormously.
-    // To hook it up as a layer, in server.rs, tack layer after:
-    //    router = router.route(
-    //        path.as_str(),
-    //        get(handle_with_cacheable_proxy)
-    //            .with_state(state)
-    //            .layer(tower::ServiceBuilder::new().layer(bodytimeout.clone())),
-    // Base the layer code on lib.rs from axum-otel-metrics, and study how
-    // Tower layers are made.
     fn apply_filters(&self, series: prometheus_parse::Scrape) -> prometheus_parse::Scrape {
         fn label_value(
             metric: &String,

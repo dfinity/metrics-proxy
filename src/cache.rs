@@ -108,7 +108,6 @@ impl SampleCacheStore {
     }
 }
 
-// FIXME: make this into a Tower service.
 #[derive(Debug, Clone)]
 /// Multi-threaded, generic cache for future results.
 /// During optimistic caching case, it takes less than 1% of CPU
@@ -132,6 +131,10 @@ impl<Y: Sync + Send> DeadlineCacher<Y> {
     ///
     /// Returns a tuple (Arc<Y>, bool) where the boolean indicates
     /// if the result was from cache or not.
+    ///
+    /// Designed to hold the global cache mutex for as little time
+    /// as possible (e.g. the request fetch is done with the global
+    /// cache lock not held).
     pub async fn get_or_insert_with(
         &self,
         cache_key: String,
@@ -220,6 +223,8 @@ impl<S> Layer<S> for CacheLayer {
 }
 
 #[derive(Debug, Clone)]
+/// Concrete implementation of the cache storage for
+/// HTTP responses.
 struct CachedResponse {
     version: http::Version,
     status: http::StatusCode,
