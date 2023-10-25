@@ -591,7 +591,7 @@ impl From<Config> for Vec<HttpProxy> {
                 HttpProxyTarget {
                     connect_to: proxy.connect_to,
                     label_filters: proxy.label_filters,
-                    cache_duration: proxy.cache_duration.into(),
+                    cache_duration: proxy.cache_duration,
                 },
             )]);
 

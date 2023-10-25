@@ -6,6 +6,7 @@ use hyper::Response;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::future::Future;
+use std::hash::Hash;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -108,6 +109,9 @@ impl SampleCacheStore {
     }
 }
 
+/// The type used by entries in DeadlineCacher-owned hashmaps.
+type DeadlineCacherEntry<EntryT> = Arc<RwLock<Option<Arc<EntryT>>>>;
+
 #[derive(Debug, Clone)]
 /// Multi-threaded, generic cache for future results.
 /// During optimistic caching case, it takes less than 1% of CPU
@@ -124,16 +128,16 @@ impl SampleCacheStore {
 /// is done, all parallel readers of the same resource get served
 /// the results of the single request initiated by the first
 /// requestor.
-pub struct DeadlineCacher<Y: Sized + 'static> {
-    variants: Arc<Mutex<HashMap<String, Arc<RwLock<Option<Arc<Y>>>>>>>,
+pub struct DeadlineCacher<KeyT: 'static, EntryT: Sized + 'static> {
+    variants: Arc<Mutex<HashMap<KeyT, DeadlineCacherEntry<EntryT>>>>,
     staleness: Duration,
 }
 
-impl<Y: Sync + Send> DeadlineCacher<Y> {
+impl<KeyT: Eq + Hash + Clone + Sync + Send, EntryT: Sync + Send> DeadlineCacher<KeyT, EntryT> {
     pub fn new(staleness: Duration) -> Self {
         DeadlineCacher {
             variants: Arc::new(Mutex::new(HashMap::new())),
-            staleness: staleness,
+            staleness,
         }
     }
 
@@ -146,16 +150,16 @@ impl<Y: Sync + Send> DeadlineCacher<Y> {
     /// used by the caller to do bookkeeping on cache effectiveness.
     pub async fn get_or_insert_with(
         &self,
-        cache_key: String,
-        fut: impl Future<Output = (Y, bool)>,
-    ) -> (Arc<Y>, bool) {
+        cache_key: KeyT,
+        fut: impl Future<Output = (EntryT, bool)>,
+    ) -> (Arc<EntryT>, bool) {
         let hashmap = self.variants.clone();
 
         // Lock the global cache.
         let mut locked_hashmap = hashmap.lock().await;
 
         // Check the cache for an entry corresponding to a resource.
-        if let Some(entry) = locked_hashmap.get(&cache_key).clone() {
+        if let Some(entry) = locked_hashmap.get(&cache_key) {
             // There is an entry.  Lock it for read first.
             let guard = entry.read().await;
             // The following cached_value will always be Some() for pages that
@@ -188,7 +192,7 @@ impl<Y: Sync + Send> DeadlineCacher<Y> {
         // unrun and dropped (therefore canceled) if not used.
         let (item3, cache_it) = fut.await;
         let arced = Arc::new(item3);
-        if cache_it == true {
+        if cache_it {
             // Save into cache *only* if cache_it is true.
             // Otherwise leave the empty None guard in place.
             *locked_entry_guard = Some(arced.clone());
@@ -196,7 +200,7 @@ impl<Y: Sync + Send> DeadlineCacher<Y> {
 
         // Now, schedule the asynchronous removal of the cached
         // item from the hashmap.
-        let staleness = self.staleness.clone();
+        let staleness = self.staleness;
         let variants = self.variants.clone();
         tokio::task::spawn(async move {
             tokio::time::sleep(staleness).await;
@@ -222,7 +226,7 @@ impl<Y: Sync + Send> DeadlineCacher<Y> {
 // Tower layer for a request/response cache per
 // resource and authentication credentials.
 pub struct CacheLayer {
-    cacher: DeadlineCacher<CachedResponse>,
+    cacher: DeadlineCacher<String, CachedResponse>,
 }
 
 impl CacheLayer {
@@ -261,7 +265,7 @@ struct CachedResponse {
 // structure to provide an asynchronous cache that coalesces
 // incoming requests designated as cacheable.
 pub struct CacheService<S> {
-    cacher: DeadlineCacher<CachedResponse>,
+    cacher: DeadlineCacher<String, CachedResponse>,
     metrics: CacheMetrics,
     inner: S,
 }
@@ -290,10 +294,7 @@ where
         let frontend_label = format!(
             "{}{}",
             match reqheaders.get("host") {
-                Some(host) => match host.to_str() {
-                    Ok(hoststr) => hoststr,
-                    Err(_) => "invalid-hostname",
-                },
+                Some(host) => host.to_str().unwrap_or("invalid-hostname"),
                 None => "no-hostname",
             },
             request.uri()
@@ -312,7 +313,7 @@ where
             fn badresp(version: http::Version, reason: String) -> (CachedResponse, bool) {
                 (
                     CachedResponse {
-                        version: version,
+                        version,
                         status: http::StatusCode::INTERNAL_SERVER_ERROR,
                         headers: http::HeaderMap::new(),
                         contents: reason.into(),
