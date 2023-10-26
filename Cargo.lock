@@ -1279,16 +1279,17 @@ dependencies = [
 
 [[package]]
 name = "ring"
-version = "0.17.5"
+version = "0.16.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb0205304757e5d899b9c2e448b867ffd03ae7f988002e47cd24954391394d0b"
+checksum = "3053cf52e236a3ed746dfc745aa9cacf1b791d846bdaf412f60a8d7d6e17c8fc"
 dependencies = [
  "cc",
- "getrandom",
  "libc",
+ "once_cell",
  "spin",
  "untrusted",
- "windows-sys 0.48.0",
+ "web-sys",
+ "winapi",
 ]
 
 [[package]]
