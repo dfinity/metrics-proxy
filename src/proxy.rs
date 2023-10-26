@@ -365,16 +365,16 @@ mod tests {
             let mut sorted_rendered: Vec<String> = rendered.lines().map(|s| s.to_owned()).collect();
             sorted_rendered.sort();
             let sorted_text = sorted_rendered.join("\n");
-            return TestPayload {
-                sorted_text: sorted_text,
+            TestPayload {
+                sorted_text,
                 parsed_scrape: scrape,
-            };
+            }
         }
 
         fn from_text(text: &str) -> Self {
             let parsed_scrape =
                 prometheus_parse::Scrape::parse(text.lines().map(|s| Ok(s.to_owned()))).unwrap();
-            return TestPayload::from_scrape(parsed_scrape);
+            TestPayload::from_scrape(parsed_scrape)
         }
     }
 
