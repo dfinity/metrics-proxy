@@ -168,6 +168,11 @@ This software is distributed under the provisions of the
 
 ## Contributions
 
-We appreciate anyone who wants to contribute to this project.  Our
-contributions follow the standard Github model -- you can create issues,
-fork the project, and send pull requests.
+We appreciate anyone who wants to contribute to this project.  The DFINITY
+Foundation makes the code of this metrics-proxy available to the public
+under the Apache 2.0 license.
+
+Contributions can be made under the standard Github pull request model,
+with one caveat: first-time contributors will need to undergo our
+[CLA](https://github.com/dfinity/cla) process to ensure that the legal
+rights of other developers under the license are protected.
