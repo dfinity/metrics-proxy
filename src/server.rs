@@ -143,12 +143,10 @@ impl Server {
                 }
                 router
             }
-            ServerKind::PrometheusMetricsServer(listen_on) => {
-                match self.metrics_collector.clone() {
-                    Some(pl) => router.merge(pl.path_route(listen_on.handler)),
-                    None => router,
-                }
-            }
+            ServerKind::PrometheusMetricsServer(_) => match self.metrics_collector.clone() {
+                Some(pl) => router.merge(pl.routes()),
+                None => router,
+            },
         };
 
         // Second-to-last the timeout layer.

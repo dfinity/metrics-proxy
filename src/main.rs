@@ -1,4 +1,6 @@
-use axum_otel_metrics::HttpMetricsLayerBuilder;
+use std::sync::Arc;
+
+use axum_otel_metrics::{HttpMetricsLayerBuilder, PathSkipper};
 use clap::Parser;
 use tokio::task::JoinSet;
 
@@ -19,11 +21,14 @@ pub async fn run() {
 
     let cfg = maybecfg.unwrap();
     let mut telemetry = cfg.metrics.clone().map(|listener| {
+        let handler = listener.handler.clone();
         (
             listener,
             HttpMetricsLayerBuilder::new()
                 .with_service_name(env!("CARGO_PKG_NAME").to_string())
                 .with_service_version(env!("CARGO_PKG_VERSION").to_string())
+                .with_path(handler)
+                .with_skipper(PathSkipper::new_with_fn(Arc::new(move |_: &str| false)))
                 .build(),
         )
     });
