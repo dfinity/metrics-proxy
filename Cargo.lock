@@ -157,8 +157,9 @@ dependencies = [
 
 [[package]]
 name = "axum-otel-metrics"
-version = "0.6.0"
-source = "git+https://github.com/DFINITYManu/axum-otel-metrics.git?rev=c93e2d4efdf1503ee98e60294712b4ac7942160a#c93e2d4efdf1503ee98e60294712b4ac7942160a"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e3f24cfb1bef7ab5f78d7e6833b1a39ec5ffea5018d3300c83082874681971b"
 dependencies = [
  "axum",
  "futures-util",
