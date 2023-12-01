@@ -34,7 +34,8 @@ static STRIP_FROM_RESPONSE: [&str; 1] = ["content-length"];
 static PROXIED_CLIENT_HEADERS: [&str; 1] = ["accept"];
 
 fn safely_clone_response_headers(orgheaders: reqwest::header::HeaderMap) -> HeaderMap {
-    // println!("Original: {:?}", orgheaders);
+    // Some of this code can be deleted once reqwest updates
+    // to a later http crate version.
     let mut headers = HeaderMap::new();
     for (k, v) in orgheaders {
         if let Some(kk) = k {
@@ -68,7 +69,8 @@ fn safely_clone_response_headers(orgheaders: reqwest::header::HeaderMap) -> Head
 }
 
 fn safely_clone_request_headers(orgheaders: HeaderMap) -> reqwest::header::HeaderMap {
-    // println!("Original: {:?}", orgheaders);
+    // Some of this code can be deleted once reqwest updates
+    // to a later http crate version.
     let mut headers = reqwest::header::HeaderMap::new();
     for (k, v) in orgheaders {
         if let Some(kk) = k {
