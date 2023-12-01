@@ -18,7 +18,7 @@ pub async fn run() {
     }
     let mut set = JoinSet::new();
 
-    simple_logger::init_with_level(log::Level::Trace).unwrap();
+    simple_logger::init_with_level(log::Level::Info).unwrap();
 
     let cfg = maybecfg.unwrap();
     let mut telemetry = cfg.metrics.clone().map(|listener| {
