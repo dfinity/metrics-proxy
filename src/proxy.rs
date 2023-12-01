@@ -64,7 +64,6 @@ fn safely_clone_response_headers(orgheaders: reqwest::header::HeaderMap) -> Head
             }
         }
     }
-    // println!("Filtered: {:?}", headers);
     headers
 }
 
@@ -95,7 +94,6 @@ fn safely_clone_request_headers(orgheaders: HeaderMap) -> reqwest::header::Heade
             }
         }
     }
-    // println!("Filtered: {:?}", headers);
     headers
 }
 
