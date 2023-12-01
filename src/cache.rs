@@ -1,9 +1,12 @@
-use http::Request;
-
+use crate::metrics::CacheMetrics;
+use axum::http;
+use axum::response::Response;
 use futures_util::FutureExt;
-use hyper::body::HttpBody;
-use hyper::Response;
+use http::Request;
+use http_body_util::BodyExt;
 use itertools::Itertools;
+use opentelemetry::KeyValue;
+use prometheus_parse::{self, Sample};
 use std::collections::HashMap;
 use std::future::Future;
 use std::hash::Hash;
@@ -13,12 +16,6 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use tower::{Layer, Service};
-
-use crate::metrics::CacheMetrics;
-use axum::http;
-use hyper::body::Bytes;
-use opentelemetry::KeyValue;
-use prometheus_parse::{self, Sample};
 
 /// Caching primitives used by metrics-proxy.
 ///
@@ -256,10 +253,10 @@ impl<S> Layer<S> for CacheLayer {
 /// Concrete implementation of the cache storage for
 /// HTTP responses.
 struct CachedResponse {
-    version: http::Version,
-    status: http::StatusCode,
+    version: axum::http::Version,
+    status: axum::http::StatusCode,
     headers: http::HeaderMap,
-    contents: Bytes,
+    contents: axum::body::Bytes,
 }
 
 #[derive(Clone)]
@@ -275,16 +272,16 @@ pub struct CacheService<S> {
 
 impl<S> Service<Request<axum::body::Body>> for CacheService<S>
 where
-    S: Service<Request<axum::body::Body>, Response = Response<axum::body::BoxBody>>
+    S: Service<Request<axum::body::Body>, Response = Response<axum::body::Body>>
         + std::marker::Send
         + 'static,
     S::Error: Into<Box<dyn std::error::Error>>,
     S::Error: std::fmt::Debug,
     S::Error: std::marker::Send,
-    <S as Service<http::Request<hyper::Body>>>::Future: std::marker::Send,
+    <S as Service<http::Request<axum::body::Body>>>::Future: std::marker::Send,
 {
     type Error = S::Error;
-    type Response = Response<axum::body::BoxBody>;
+    type Response = Response<axum::body::Body>;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -313,7 +310,7 @@ where
         let metrics = self.metrics.clone();
 
         let fut = async move {
-            fn badresp(version: http::Version, reason: String) -> (CachedResponse, bool) {
+            fn badresp(version: axum::http::Version, reason: String) -> (CachedResponse, bool) {
                 (
                     CachedResponse {
                         version,
@@ -331,7 +328,7 @@ where
                 ),
                 Ok(res) => {
                     let (parts, body) = res.into_parts();
-                    match hyper::body::to_bytes(body).await {
+                    match body.collect().await {
                         Err(e) => badresp(
                             parts.version,
                             format!("Proxy error fetching body: {:?}", e).to_string(),
@@ -341,7 +338,7 @@ where
                                 version: parts.version,
                                 status: parts.status,
                                 headers: parts.headers,
-                                contents: data,
+                                contents: data.to_bytes(),
                             },
                             parts.status.is_success(),
                         ),
@@ -372,9 +369,8 @@ where
             headers.extend(res.headers.clone());
             let resp = respb
                 .status(res.status)
-                .body(axum::body::BoxBody::new(
-                    axum::body::Full::new(res.contents.clone()).map_err(axum::Error::new),
-                ))
+                .body(axum::body::Body::from(res.contents.clone()))
+                .map_err(axum::Error::new)
                 .unwrap();
             Ok(resp)
         }

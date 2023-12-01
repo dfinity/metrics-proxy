@@ -1,7 +1,6 @@
-use std::sync::Arc;
-
 use axum_otel_metrics::{HttpMetricsLayerBuilder, PathSkipper};
 use clap::Parser;
+use std::sync::Arc;
 use tokio::task::JoinSet;
 
 #[derive(Parser)]
@@ -18,6 +17,8 @@ pub async fn run() {
         std::process::exit(exitcode::CONFIG);
     }
     let mut set = JoinSet::new();
+
+    simple_logger::init_with_level(log::Level::Trace).unwrap();
 
     let cfg = maybecfg.unwrap();
     let mut telemetry = cfg.metrics.clone().map(|listener| {
