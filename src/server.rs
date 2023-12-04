@@ -1,24 +1,34 @@
-use crate::config::{self, HttpProxy, ListenerSpec};
+use crate::config::{HttpProxy, ListenerSpec, Protocol};
 use crate::proxy;
+use crate::tokiotimer::TokioTimer;
+use axum::debug_handler;
+use axum::extract::Request;
 use axum::extract::State;
 use axum::http;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::middleware::map_response;
 use axum::{routing::get, Router};
 use axum_otel_metrics::HttpMetricsLayer;
 use hyper;
 use hyper::body::Bytes;
-use hyper::server::conn::AddrIncoming;
-use hyper_rustls::TlsAcceptor;
+use hyper::body::Incoming;
+use hyper_util::rt::TokioExecutor;
+use hyper_util::server::conn::auto;
+use log::{debug, error};
 use rustls;
 use std::fmt;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::TcpListener;
+use tokio_rustls::{rustls::ServerConfig, TlsAcceptor};
+use tower::Service;
 use tower_http;
 
 #[derive(Debug)]
 pub enum ServeErrorKind {
-    HyperError(hyper::Error),
+    ListenError(std::io::Error),
     RustlsError(rustls::Error),
 }
 
@@ -28,7 +38,7 @@ impl fmt::Display for ServeErrorKind {
             f,
             "{}",
             match self {
-                ServeErrorKind::HyperError(e) => format!("{e}"),
+                ServeErrorKind::ListenError(e) => format!("{e}"),
                 ServeErrorKind::RustlsError(ef) => format!("{ef}"),
             }
         )
@@ -101,10 +111,11 @@ impl Server {
     /// * `StartError` is returned if the server fails to start.
     pub async fn serve(self) -> Result<(), StartError> {
         // Short helper to issue backend request.
+        #[debug_handler]
         async fn handle_with_proxy(
+            headers: HeaderMap,
             State(proxy): State<proxy::MetricsProxier>,
-            headers: http::HeaderMap,
-        ) -> (StatusCode, http::HeaderMap, Bytes) {
+        ) -> (StatusCode, HeaderMap, Bytes) {
             proxy.handle(headers).await
         }
 
@@ -123,7 +134,7 @@ impl Server {
             ServerKind::PrometheusMetricsServer(listen_on) => listen_on.clone(),
         };
 
-        let mut router: Router<_, _> = Router::new();
+        let mut router: Router<_> = Router::new();
         let bodytimeout =
             tower_http::timeout::RequestBodyTimeoutLayer::new(listener.header_read_timeout);
 
@@ -155,10 +166,10 @@ impl Server {
         // to 503 Gateway Timeout.
         // (Contrast with backend down -- this usually requires a response
         // of 502 Bad Gateway, which is already issued by the client handler.)
-        let timeout_handling_layer =
-            tower_http::timeout::TimeoutLayer::new(listener.request_response_timeout);
         router = router
-            .layer(timeout_handling_layer)
+            .layer(tower_http::timeout::TimeoutLayer::new(
+                listener.request_response_timeout,
+            ))
             .layer(map_response(gateway_timeout));
 
         // Then, finally, the telemetry layer.
@@ -169,37 +180,79 @@ impl Server {
             router = router.layer(pl);
         }
 
-        let incoming = AddrIncoming::bind(&listener.sockaddr).map_err(|error| StartError {
-            addr: listener.sockaddr,
-            error: ServeErrorKind::HyperError(error),
-        })?;
+        let incoming = TcpListener::bind(&listener.sockaddr)
+            .await
+            .map_err(|error| StartError {
+                addr: listener.sockaddr,
+                error: ServeErrorKind::ListenError(error),
+            })?;
 
-        match &listener.protocol {
-            config::Protocol::Http => {
-                hyper::Server::builder(incoming)
-                    .http1_header_read_timeout(listener.header_read_timeout)
-                    .serve(router.into_make_service())
-                    .await
+        let acceptor = match &listener.protocol {
+            Protocol::Http => None,
+            Protocol::Https { certificate, key } => {
+                let mut server_config = ServerConfig::builder()
+                    .with_safe_defaults()
+                    .with_no_client_auth()
+                    .with_single_cert(certificate.clone(), key.clone())
+                    .map_err(|error| StartError {
+                        addr: listener.sockaddr,
+                        error: ServeErrorKind::RustlsError(error),
+                    })?;
+                server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+                Some(TlsAcceptor::from(Arc::new(server_config)))
             }
-            config::Protocol::Https { certificate, key } => {
-                hyper::Server::builder(
-                    TlsAcceptor::builder()
-                        .with_single_cert(certificate.clone(), key.clone())
-                        .map_err(|error| StartError {
-                            addr: listener.sockaddr,
-                            error: ServeErrorKind::RustlsError(error),
-                        })?
-                        .with_all_versions_alpn()
-                        .with_incoming(incoming),
-                )
-                .http1_header_read_timeout(listener.header_read_timeout)
-                .serve(router.into_make_service())
-                .await
-            }
+        };
+
+        loop {
+            match incoming.accept().await {
+                Err(err) => {
+                    error!("Error accepting new connection: {:?}", err);
+                }
+                Ok((socket, addr)) => {
+                    debug!("Accepted connection from {}", addr);
+                    let tower_service = router.clone();
+                    let hyper_service =
+                        hyper::service::service_fn(move |request: Request<Incoming>| {
+                            tower_service.clone().clone().call(request)
+                        });
+                    let mut builder = auto::Builder::new(TokioExecutor::new());
+                    builder
+                        .http1()
+                        .timer(TokioTimer)
+                        .header_read_timeout(listener.header_read_timeout);
+                    let tls = acceptor.clone();
+                    tokio::task::spawn(async move {
+                        match tls {
+                            None => {
+                                let io = hyper_util::rt::tokio::TokioIo::new(socket);
+                                debug!("About to call server to serve {}", addr);
+                                let ret = builder
+                                    .serve_connection_with_upgrades(io, hyper_service)
+                                    .await;
+                                if let Err(err) = ret {
+                                    error!("Error serving plain request from {}: {:?}", addr, err);
+                                }
+                            }
+                            Some(tls) => {
+                                debug!("About to handshake TLS with {}", addr);
+                                let ret = tls.accept(socket).await;
+                                if let Err(err) = ret {
+                                    error!("Error during TLS handshake from {}: {:?}", addr, err);
+                                    return;
+                                }
+                                let io = hyper_util::rt::tokio::TokioIo::new(ret.unwrap());
+                                debug!("About to call TLS-enabled server to serve {}", addr);
+                                let ret2 = builder
+                                    .serve_connection_with_upgrades(io, hyper_service)
+                                    .await;
+                                if let Err(err) = ret2 {
+                                    error!("Error serving TLS request from {}: {:?}", addr, err);
+                                }
+                            }
+                        }
+                    });
+                }
+            };
         }
-        .map_err(|error| StartError {
-            addr: listener.sockaddr,
-            error: ServeErrorKind::HyperError(error),
-        })
     }
 }

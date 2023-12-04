@@ -1,11 +1,15 @@
 use crate::config::HttpProxyTarget;
 use crate::{cache::SampleCacheStore, client, config};
-use axum::http;
+use axum::http::header;
+use axum::http::HeaderMap;
+use axum::http::HeaderValue;
 use axum::http::StatusCode;
+use http::HeaderName;
 use hyper::body::Bytes;
 use itertools::Itertools;
+use log::error;
 use prometheus_parse::{self, Sample};
-use reqwest::header;
+use reqwest::Client;
 use std::collections::HashMap;
 use std::f64;
 use std::iter::zip;
@@ -29,38 +33,72 @@ static STRIP_FROM_RESPONSE: [&str; 1] = ["content-length"];
 // Headers that may be relayed from client to backend.
 static PROXIED_CLIENT_HEADERS: [&str; 1] = ["accept"];
 
-fn safely_clone_response_headers(orgheaders: header::HeaderMap) -> http::HeaderMap {
-    // println!("Original: {:?}", orgheaders);
-    let mut headers = http::HeaderMap::new();
+fn safely_clone_response_headers(orgheaders: reqwest::header::HeaderMap) -> HeaderMap {
+    // Some of this code can be deleted once reqwest updates
+    // to a later http crate version.
+    let mut headers = HeaderMap::new();
     for (k, v) in orgheaders {
         if let Some(kk) = k {
             let lower = kk.to_string().to_lowercase();
             if !HOPBYHOP.contains(&lower.as_str()) && !STRIP_FROM_RESPONSE.contains(&lower.as_str())
             {
-                headers.insert(kk, v);
+                let vv = v.as_ref();
+                {
+                    match HeaderValue::from_bytes(vv) {
+                        Ok(vvv) => {
+                            match HeaderName::from_bytes(kk.as_ref()) {
+                                Ok(kkk) => {
+                                    headers.insert(kkk, vvv);
+                                }
+                                Err(err) => {
+                                    error!("Invalid response header name: {}", err)
+                                }
+                            };
+                        }
+                        // Ignore such headers;
+                        Err(err) => {
+                            error!("Invalid response header value: {}", err)
+                        }
+                    }
+                }
             }
         }
     }
-    // println!("Filtered: {:?}", headers);
     headers
 }
 
-fn safely_clone_request_headers(orgheaders: http::HeaderMap) -> header::HeaderMap {
-    // println!("Original: {:?}", orgheaders);
-    let mut headers = header::HeaderMap::new();
+fn safely_clone_request_headers(orgheaders: HeaderMap) -> reqwest::header::HeaderMap {
+    // Some of this code can be deleted once reqwest updates
+    // to a later http crate version.
+    let mut headers = reqwest::header::HeaderMap::new();
     for (k, v) in orgheaders {
         if let Some(kk) = k {
             if PROXIED_CLIENT_HEADERS.contains(&kk.to_string().to_lowercase().as_str()) {
-                headers.insert(kk, v);
+                let vv = v.as_ref();
+                match reqwest::header::HeaderValue::from_bytes(vv) {
+                    Ok(vvv) => {
+                        match reqwest::header::HeaderName::from_bytes(kk.as_ref()) {
+                            Ok(kkk) => {
+                                headers.insert(kkk, vvv);
+                            }
+                            Err(err) => {
+                                error!("Invalid request header name: {}", err)
+                            }
+                        };
+                    }
+                    // Ignore such headers;
+                    Err(err) => {
+                        error!("Invalid request header value: {}", err)
+                    }
+                }
             }
         }
     }
-    // println!("Filtered: {:?}", headers);
     headers
 }
 
-fn fallback_headers() -> header::HeaderMap {
-    let mut fallback_headers = http::HeaderMap::new();
+fn fallback_headers() -> HeaderMap {
+    let mut fallback_headers = HeaderMap::new();
     fallback_headers.insert(header::CONTENT_TYPE, "text/plain".parse().unwrap());
     fallback_headers
 }
@@ -179,7 +217,7 @@ fn render_scrape_data(scrape: &prometheus_parse::Scrape) -> Bytes {
 pub struct MetricsProxier {
     target: HttpProxyTarget,
     cache: Arc<Mutex<SampleCacheStore>>,
-    client: reqwest::Client,
+    client: Client,
 }
 
 impl From<HttpProxyTarget> for MetricsProxier {
@@ -187,23 +225,33 @@ impl From<HttpProxyTarget> for MetricsProxier {
         MetricsProxier {
             target,
             cache: Arc::new(Mutex::new(SampleCacheStore::default())),
-            client: reqwest::Client::new(),
+            client: Client::new(),
         }
     }
 }
 
 impl MetricsProxier {
-    pub async fn handle(&self, headers: http::HeaderMap) -> (StatusCode, http::HeaderMap, Bytes) {
-        let clientheaders = safely_clone_request_headers(headers);
+    pub async fn handle(&self, headers: HeaderMap) -> (StatusCode, HeaderMap, Bytes) {
+        let clientheaders: reqwest::header::HeaderMap = safely_clone_request_headers(headers);
         let result =
             client::scrape(self.client.clone(), &self.target.connect_to, clientheaders).await;
         match result {
             Err(error) => match error {
-                client::ScrapeError::Non200(non200) => (
-                    non200.status,
-                    safely_clone_response_headers(non200.headers),
-                    non200.data,
-                ),
+                client::ScrapeError::Non200(non200) => {
+                    // Must do this because reqwest StatusCode and axum StatusCode
+                    // come from different versions of the http crates.
+                    // TODO: once reqwest uses newer versions of the http crate,
+                    // simply pass through the status code reqwest returns.
+                    let statuscode = match StatusCode::from_u16(non200.status.as_u16()) {
+                        Ok(s) => s,
+                        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                    };
+                    (
+                        statuscode,
+                        safely_clone_response_headers(non200.headers),
+                        non200.data,
+                    )
+                }
                 client::ScrapeError::ParseError(parseerror) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     fallback_headers(),
