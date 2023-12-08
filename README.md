@@ -143,8 +143,8 @@ Currently, there are three action classes:
   it should be `keep`ed.
 * `reduce_time_resolution`: this action (with a mandatory `resolution`
   parameter as a duration in string form) instructs the proxy to serve
-  the metric from a cache unless the cache entry is older than the
-  specified time resolution.
+  the matching metrics from a cache unless the cache entry is older than
+  the specified time resolution.
 * `add_absolute_noise`: this action has a mandatory `window` parameter,
   and another `quantum` parameter.  When this is used, a random amount
   within `[-window .. +window]` is added to each matching sample, with
@@ -153,6 +153,10 @@ Currently, there are three action classes:
   with a window of 100 and a quantum of 10 will get a random value added
   to 5600, the random value would be between -100 and +100, and the
   random value would always be generated in granularity steps of 10.
+  Users of this feature in combination with `reduce_time_resolution`
+  should make sure that `reduce_time_resolution` is ordered *after*
+  `add_absolute_noise`, so the noise is not added to the cached sample
+  returned by `reduce_time_resolution`.
 
 ### `metrics`
 
