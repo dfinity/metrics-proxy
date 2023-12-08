@@ -45,6 +45,7 @@ log = "0.4.20"
 pin-project-lite = "0.2.13"
 tokio-rustls = "0.24.1"
 simple_logger = "4.3.0"
+rand = "0.8.5"
 
 [features]
 default = ["rustls-tls-native-roots"]

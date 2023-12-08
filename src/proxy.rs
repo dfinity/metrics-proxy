@@ -8,7 +8,8 @@ use http::HeaderName;
 use hyper::body::Bytes;
 use itertools::Itertools;
 use log::error;
-use prometheus_parse::{self, Sample};
+use prometheus_parse::{self, Sample, Value};
+use rand::Rng;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::f64;
@@ -123,23 +124,19 @@ fn render_labels(labels: &prometheus_parse::Labels, extra: Option<String>) -> St
 
 fn render_sample(sample: &prometheus_parse::Sample) -> Vec<String> {
     let values = match &sample.value {
-        prometheus_parse::Value::Untyped(val)
-        | prometheus_parse::Value::Counter(val)
-        | prometheus_parse::Value::Gauge(val) => vec![format!("{:e}", val)],
-        prometheus_parse::Value::Histogram(val) => val
+        Value::Untyped(val) | Value::Counter(val) | Value::Gauge(val) => vec![format!("{:e}", val)],
+        Value::Histogram(val) => val
             .iter()
             .map(|h| format!("{:e}", h.count))
             .collect::<Vec<String>>(),
-        prometheus_parse::Value::Summary(val) => val
+        Value::Summary(val) => val
             .iter()
             .map(|h| format!("{:e}", h.count))
             .collect::<Vec<String>>(),
     };
     let labels = match &sample.value {
-        prometheus_parse::Value::Untyped(_val)
-        | prometheus_parse::Value::Counter(_val)
-        | prometheus_parse::Value::Gauge(_val) => vec![None],
-        prometheus_parse::Value::Histogram(val) => val
+        Value::Untyped(_val) | Value::Counter(_val) | Value::Gauge(_val) => vec![None],
+        Value::Histogram(val) => val
             .iter()
             .map(|h| {
                 Some(format!("le=\"{}\"", {
@@ -153,7 +150,7 @@ fn render_sample(sample: &prometheus_parse::Sample) -> Vec<String> {
                 }))
             })
             .collect::<Vec<Option<String>>>(),
-        prometheus_parse::Value::Summary(val) => val
+        Value::Summary(val) => val
             .iter()
             .map(|h| Some(format!("quantile=\"{}\"", h.quantile)))
             .collect::<Vec<Option<String>>>(),
@@ -192,11 +189,11 @@ fn render_scrape_data(scrape: &prometheus_parse::Scrape) -> Bytes {
                     h,
                     metric,
                     match value {
-                        prometheus_parse::Value::Untyped(_) => "untyped",
-                        prometheus_parse::Value::Counter(_) => "counter",
-                        prometheus_parse::Value::Gauge(_) => "gauge",
-                        prometheus_parse::Value::Histogram(_) => "histogram",
-                        prometheus_parse::Value::Summary(_) => "summary",
+                        Value::Untyped(_) => "untyped",
+                        Value::Counter(_) => "counter",
+                        Value::Gauge(_) => "gauge",
+                        Value::Histogram(_) => "histogram",
+                        Value::Summary(_) => "summary",
                     },
                     rendered
                 )
@@ -310,9 +307,8 @@ impl MetricsProxier {
             let now = std::time::Instant::now();
             let mut cache = self.cache.lock().unwrap();
 
-            for sample in series.samples {
+            for mut sample in series.samples {
                 let mut keep: Option<bool> = None;
-                let mut cached_sample: Option<Sample> = None;
                 // The following value, if true at the end of this loop,
                 // indicates whether the sample should be cached for
                 // future lookups.  Values are only cached when the
@@ -343,8 +339,50 @@ impl MetricsProxier {
                                     // Below, we insert it into the cache if nothing was returned
                                     // into the cache at all.
                                     let staleness: Duration = (*resolution).into();
-                                    cached_sample = cache.get(&sample, now, staleness);
-                                    must_cache_sample = true;
+                                    match cache.get(&sample, now, staleness) {
+                                        Some(got) => sample = got,
+                                        None => must_cache_sample = true,
+                                    }
+                                }
+                                config::LabelFilterAction::AddAbsoluteNoise { window, quantum } => {
+                                    // If the cache has not expired according to the duration,
+                                    // then the cache returns the cached sample.
+                                    // Else, if the cache has expired according to the duration,
+                                    // then the cache returns nothing.
+                                    // Below, we insert it into the cache if nothing was returned
+                                    // into the cache at all.
+                                    let mut rng = rand::thread_rng();
+                                    let wnd = *window;
+                                    let randomness: f64 = rng.gen_range(-wnd..wnd);
+                                    let quantized =
+                                        (randomness * (1.0 / quantum)).round() * quantum;
+                                    let new_value = match sample.value {
+                                        Value::Counter(c) => Value::Counter(c + quantized),
+                                        Value::Gauge(c) => Value::Gauge(c + quantized),
+                                        Value::Untyped(c) => Value::Untyped(c + quantized),
+                                        Value::Histogram(hc) => Value::Histogram(
+                                            hc.iter()
+                                                .map(|vv| prometheus_parse::HistogramCount {
+                                                    less_than: vv.less_than,
+                                                    count: vv.count + quantized,
+                                                })
+                                                .collect::<Vec<_>>(),
+                                        ),
+                                        Value::Summary(summ) => Value::Summary(
+                                            summ.iter()
+                                                .map(|vv| prometheus_parse::SummaryCount {
+                                                    quantile: vv.quantile,
+                                                    count: vv.count + quantized,
+                                                })
+                                                .collect::<Vec<_>>(),
+                                        ),
+                                    };
+                                    sample = Sample {
+                                        metric: sample.metric,
+                                        value: new_value,
+                                        labels: sample.labels,
+                                        timestamp: sample.timestamp,
+                                    };
                                 }
                             }
                         }
@@ -366,14 +404,10 @@ impl MetricsProxier {
                     );
                 }
 
-                if let Some(s) = cached_sample {
-                    samples.push(s);
-                } else {
-                    if must_cache_sample {
-                        cache.put(sample.clone(), now);
-                    }
-                    samples.push(sample);
+                if must_cache_sample {
+                    cache.put(sample.clone(), now);
                 }
+                samples.push(sample);
             }
         }
 
@@ -546,7 +580,7 @@ node_frobnicated{cpu="0"} 0
             r#"
 # HELP node_frobnicated Number of times processing packets ran out of quota
 # TYPE node_frobnicated counter
-node_frobnicated{cpu="0"} 25
+node_frobnicated{cpu="0"} 25.1
 "#,
         );
         let second_output =
@@ -568,5 +602,64 @@ node_frobnicated{cpu="0"} 25
             second_input.sorted_text.as_str(),
             third_output.sorted_text.as_str()
         );
+    }
+
+    #[test]
+    fn test_random() {
+        let adapter = make_adapter_filter_tester(
+            serde_yaml::from_str(
+                r#"
+- regex: node_frobnicated
+  actions:
+  - add_absolute_noise:
+      window: 1000
+      quantum: 10
+  - reduce_time_resolution:
+      resolution: 1s
+"#,
+            )
+            .unwrap(),
+        );
+
+        // First scrape.  Metric should be there, and
+        // will not be filtered.  Input should be same as output.
+        let input = TestPayload::from_text(
+            r#"
+# HELP node_frobnicated Number of times processing packets ran out of quota
+# TYPE node_frobnicated gauge
+node_frobnicated{cpu="0"} 4500.1
+"#,
+        );
+        let filtered = adapter.apply_filters(input.parsed_scrape);
+        let output = TestPayload::from_scrape(filtered);
+        let original_value =
+            if let prometheus_parse::Value::Gauge(v) = output.parsed_scrape.samples[0].value {
+                assert!(
+                    format!("{:.2}", v).contains("0.1"),
+                    "Noise added to value {:.2} is not rounded to ten.",
+                    v
+                );
+                Some(v)
+            } else {
+                assert!(false, "Value was not a Gauge");
+                None
+            };
+        // Now let's check that the cache returns the same value, since
+        // the caching happens *after* the noise addition, and therefore
+        // the returned value should be cached, not noised.
+        let new_input = TestPayload::from_text(
+            r#"
+# HELP node_frobnicated Number of times processing packets ran out of quota
+# TYPE node_frobnicated gauge
+node_frobnicated{cpu="0"} 4600.1
+"#,
+        );
+        let filtered_again = adapter.apply_filters(new_input.parsed_scrape);
+        let new_output = TestPayload::from_scrape(filtered_again);
+        if let prometheus_parse::Value::Gauge(v) = new_output.parsed_scrape.samples[0].value {
+            pretty_assert_eq!(v, original_value.unwrap());
+        } else {
+            assert!(false, "Value was not a Gauge");
+        }
     }
 }

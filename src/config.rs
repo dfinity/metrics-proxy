@@ -127,6 +127,10 @@ pub enum LabelFilterAction {
     Drop,
     /// Cache the metric for an amount of time.
     ReduceTimeResolution { resolution: DurationString },
+    /// Add an amount of random noise to a metric,
+    /// in absolute terms.  Should never be used with
+    /// counters!
+    AddAbsoluteNoise { window: f64, quantum: f64 },
 }
 
 fn anchored_regex<'de, D>(deserializer: D) -> Result<regex::Regex, D::Error>

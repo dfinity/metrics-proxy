@@ -140,6 +140,14 @@ Currently, there are three action classes:
   parameter as a duration in string form) instructs the proxy to serve
   the metric from a cache unless the cache entry is older than the
   specified time resolution.
+* `add_absolute_noise`: this action has a mandatory `window` parameter,
+  and another `quantum` parameter.  When this is used, a random amount
+  within `[-window .. +window]` is added to each matching sample, with
+  that amount getting quantized by the specified `quantum` before adding
+  it to the sample.  Example: a metric with value 5600 getting noised
+  with a window of 100 and a quantum of 10 will get a random value added
+  to 5600, the random value would be between -100 and +100, and the
+  random value would always be generated in granularity steps of 10.
 
 ### `metrics`
 
