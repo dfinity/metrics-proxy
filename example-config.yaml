@@ -1,8 +1,15 @@
 proxies:
   - listen_on:
       url: http://0.0.0.0:18080/proxy
+      request_response_timeout: 5s
     connect_to:
       url: http://localhost:9100/metrics
+      # A connection to a local SSL-enabled server
+      # with self-signed certificates.
+      # url: https://localhost:9100/metrics
+      # This enables requests to SSL servers with
+      # bad certificates or incorrect host names.
+      # tolerate_bad_tls: true
     label_filters:
       - regex: .*
         actions:

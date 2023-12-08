@@ -91,6 +91,9 @@ the targets should be proxied.
 
 ### `connector_spec`
 
+This describes the target telemetry server that will be proxied by
+the metrics proxy.
+
 A dictionary with one mandatory field: `url`.  The protocol of the URL
 must be one of `http` or `https`, fragments are not allowed in the
 URL, and authentication specification is not allowed.
@@ -98,6 +101,10 @@ URL, and authentication specification is not allowed.
 Optionally, a `timeout` can be specified (as a Rust duration string) to
 instruct the proxy on how long it should wait until the proxied exporter has
 fully responded.  The default timeout is 30 seconds.
+
+A field `tolerate_bad_tls` can be set to `true` if the client should accept
+invalid / expired SSL certificates, or certificates with incorrect host names,
+from the target telemetry server.
 
 ### `label_filters_spec`
 

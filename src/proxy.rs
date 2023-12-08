@@ -222,10 +222,13 @@ pub struct MetricsProxier {
 
 impl From<HttpProxyTarget> for MetricsProxier {
     fn from(target: HttpProxyTarget) -> Self {
+        let client = Client::builder()
+            .danger_accept_invalid_certs(target.connect_to.tolerate_bad_tls)
+            .danger_accept_invalid_hostnames(target.connect_to.tolerate_bad_tls);
         MetricsProxier {
             target,
             cache: Arc::new(Mutex::new(SampleCacheStore::default())),
-            client: Client::new(),
+            client: client.build().unwrap(),
         }
     }
 }
