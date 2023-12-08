@@ -357,11 +357,17 @@ fn default_timeout() -> DurationString {
     DurationString::new(Duration::new(30, 0))
 }
 
+fn default_tolerate_bad_tls() -> bool {
+    false
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(remote = "Self")]
 /// Indicates to the proxy which backend server to fetch metrics from.
 pub struct ConnectTo {
     pub url: Url,
+    #[serde(default = "default_tolerate_bad_tls")]
+    pub tolerate_bad_tls: bool,
     #[serde(default = "default_timeout")]
     pub timeout: DurationString,
 }
