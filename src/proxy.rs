@@ -394,6 +394,7 @@ mod tests {
             connect_to: ConnectTo {
                 url: url::Url::from_str("http://localhost:8080/metrics").unwrap(),
                 timeout: DurationString::new(Duration::new(5, 0)),
+                tolerate_bad_tls: false,
             },
             label_filters: filters,
             cache_duration: DurationString::new(Duration::new(0, 0)),
