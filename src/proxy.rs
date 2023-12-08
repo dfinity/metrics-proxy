@@ -344,7 +344,10 @@ impl MetricsProxier {
                                         None => must_cache_sample = true,
                                     }
                                 }
-                                config::LabelFilterAction::AddAbsoluteNoise { window, quantum } => {
+                                config::LabelFilterAction::AddAbsoluteNoise {
+                                    amplitude,
+                                    quantum,
+                                } => {
                                     // If the cache has not expired according to the duration,
                                     // then the cache returns the cached sample.
                                     // Else, if the cache has expired according to the duration,
@@ -352,7 +355,7 @@ impl MetricsProxier {
                                     // Below, we insert it into the cache if nothing was returned
                                     // into the cache at all.
                                     let mut rng = rand::thread_rng();
-                                    let wnd = *window;
+                                    let wnd = *amplitude;
                                     let randomness: f64 = rng.gen_range(-wnd..wnd);
                                     let quantized =
                                         (randomness * (1.0 / quantum)).round() * quantum;
@@ -612,7 +615,7 @@ node_frobnicated{cpu="0"} 25.1
 - regex: node_frobnicated
   actions:
   - add_absolute_noise:
-      window: 1000
+      amplitude: 1000
       quantum: 10
   - reduce_time_resolution:
       resolution: 1s

@@ -130,7 +130,7 @@ pub enum LabelFilterAction {
     /// Add an amount of random noise to a metric,
     /// in absolute terms.  Should never be used with
     /// counters!
-    AddAbsoluteNoise { window: f64, quantum: f64 },
+    AddAbsoluteNoise { amplitude: f64, quantum: f64 },
 }
 
 fn anchored_regex<'de, D>(deserializer: D) -> Result<regex::Regex, D::Error>
