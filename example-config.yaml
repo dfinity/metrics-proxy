@@ -19,6 +19,14 @@ proxies:
           - reduce_time_resolution:
               resolution: 5s
           - keep
+      - regex: node_hwmon_temp_celsius
+        actions:
+          - add_absolute_noise:
+              window: 5
+              quantum: 0.1
+          - reduce_time_resolution:
+              resolution: 5s
+          - keep
     cache_duration: 1s
   - listen_on:
       url: http://0.0.0.0:18080/proxy2

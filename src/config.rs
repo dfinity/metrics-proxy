@@ -127,6 +127,10 @@ pub enum LabelFilterAction {
     Drop,
     /// Cache the metric for an amount of time.
     ReduceTimeResolution { resolution: DurationString },
+    /// Add an amount of random noise to a metric,
+    /// in absolute terms.  Should never be used with
+    /// counters!
+    AddAbsoluteNoise { amplitude: f64, quantum: f64 },
 }
 
 fn anchored_regex<'de, D>(deserializer: D) -> Result<regex::Regex, D::Error>
@@ -357,16 +361,12 @@ fn default_timeout() -> DurationString {
     DurationString::new(Duration::new(30, 0))
 }
 
-fn default_tolerate_bad_tls() -> bool {
-    false
-}
-
 #[derive(Debug, Deserialize, Clone)]
 #[serde(remote = "Self")]
 /// Indicates to the proxy which backend server to fetch metrics from.
 pub struct ConnectTo {
     pub url: Url,
-    #[serde(default = "default_tolerate_bad_tls")]
+    #[serde(default = "bool::default")]
     pub tolerate_bad_tls: bool,
     #[serde(default = "default_timeout")]
     pub timeout: DurationString,
