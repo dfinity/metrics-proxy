@@ -2,8 +2,13 @@
 
 This program is a metrics proxy that allows proxying of metrics served by
 standard Prometheus exporters, with the ability to select which exporters
-will be proxied, which metrics will appear in the results, and with which
-granularity these metrics will be updated.
+will be proxied, which metrics will appear in the results, with which
+granularity these metrics will be updated, and how the metrics should be
+altered before serving them to clients.
+
+This is useful for anyone wanting to serve metrics of their applications
+to the public, but are concerned that the metrics' values themselves
+could be used to derive (brute-force) internal states of the applications.
 
 ## Configuration
 
