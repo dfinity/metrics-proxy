@@ -21,9 +21,6 @@ proxies:
           - keep
       - regex: node_hwmon_temp_celsius
         actions:
-          - add_absolute_noise:
-              window: 5
-              quantum: 0.1
           - reduce_time_resolution:
               resolution: 5s
           - keep
