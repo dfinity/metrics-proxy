@@ -8,9 +8,7 @@ edition = "2021"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
-reqwest = { version = "0.11.18", default-features = false, features = [
-    "rustls-tls"
-] }
+reqwest = { version = "0.11.18", default-features = false }
 tokio = { version = "1.29.1", features = ["rt", "rt-multi-thread", "macros"] }
 prometheus-parse = "0.2.4"
 axum = { version = "0.7.1", features = ["macros"] }
@@ -48,7 +46,7 @@ simple_logger = "4.3.0"
 rand = "0.8.5"
 
 [features]
-default = ["rustls-tls-native-roots"]
+default = ["rustls-tls-webpki-roots"]
 rustls-tls-native-roots = ["reqwest/rustls-tls-native-roots"]
 rustls-tls-webpki-roots = ["reqwest/rustls-tls-webpki-roots"]
 
