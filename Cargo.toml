@@ -11,7 +11,7 @@ serde_yaml = "0.8"
 reqwest = { version = "0.11.18", default-features = false }
 tokio = { version = "1.29.1", features = ["rt", "rt-multi-thread", "macros"] }
 prometheus-parse = "0.2.4"
-axum = { version = "0.7.1", features = ["macros"] }
+axum = { version = "0.7.4", features = ["macros"] }
 hyper = "1.0"
 tower = { version = "0.4.13", features = ["timeout"] }
 tower-http = { version = "0.5.0", features = ["trace", "timeout"] }
@@ -27,8 +27,8 @@ pretty_assertions = "1.4.0"
 url = { version = "2.4.1", features = ["serde"] }
 prometheus = { version = "0.13.3", features = ["process"] }
 lazy_static = "1.4.0"
-axum-otel-metrics = { git = "https://github.com/ttys3/axum-otel-metrics.git", rev = "4cecbb286ac262f7c59c4345ea091530e5d9c29a" }
-opentelemetry = { version = "0.20.0", features = ["metrics"] }
+axum-otel-metrics = { git = "https://github.com/ttys3/axum-otel-metrics.git", rev = "8f58e36e44cfbea4221dfc215c8e84c810d7d563" }
+opentelemetry = { version = "0.21.0", features = ["metrics"] }
 http = "1.0.0"
 futures-util = "0.3.28"
 http-body = "1.0.0"
