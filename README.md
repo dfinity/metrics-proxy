@@ -200,3 +200,10 @@ Contributions can be made under the standard Github pull request model,
 with one caveat: first-time contributors will need to undergo our
 [CLA](https://github.com/dfinity/cla) process to ensure that the legal
 rights of other developers under the license are protected.
+
+## Development information
+
+When updating dependencies, `opentelemetry` must be pinned to the same
+version that `axum-otel-metrics` requires.  Otherwise, by virtue of
+magical global variables used by `opentelemetry`, custom metrics exported
+by this software will not be exported.

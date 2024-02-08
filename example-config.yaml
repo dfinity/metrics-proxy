@@ -9,7 +9,7 @@ proxies:
       # url: https://localhost:9100/metrics
       # This enables requests to SSL servers with
       # bad certificates or incorrect host names.
-      # tolerate_bad_tls: true
+      tolerate_bad_tls: true
     label_filters:
       - regex: .*
         actions:
