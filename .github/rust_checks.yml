@@ -1,0 +1,36 @@
+name: Rust Checks
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  rust_checks:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+
+    - name: Cargo Check
+      run: cargo check --all-targets
+
+    - name: Cargo Test
+      run: cargo test --all-targets
+
+    - name: Install cargo-audit
+      uses: actions-rs/install@v0.1
+      with:
+        crate: cargo-audit
+        version: latest
+
+    - name: Cargo Audit Dependencies for Vulnerabilities
+      run: cargo audit
