@@ -20,7 +20,7 @@ regex = "1.9.1"
 itertools = "0.11.0"
 clap = { version = "4.4.1", features = ["derive"] }
 rustls-pemfile = "1.0.3"
-rustls = "0.21.7"
+rustls = "0.21.11"
 hyper-rustls = "0.24.1"
 exitcode = "1.1.2"
 pretty_assertions = "1.4.0"
