@@ -8,7 +8,7 @@ use axum::http;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::middleware::map_response;
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 use axum_otel_metrics::HttpMetricsLayer;
 use hyper;
 use hyper::body::Bytes;
@@ -22,7 +22,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio_rustls::{rustls::ServerConfig, TlsAcceptor};
+use tokio_rustls::{TlsAcceptor, rustls::ServerConfig};
 use tower::Service;
 use tower_http;
 
@@ -155,7 +155,16 @@ impl Server {
                 router
             }
             ServerKind::PrometheusMetricsServer(_) => match self.metrics_collector.clone() {
-                Some(pl) => router.merge(pl.routes()),
+                Some(_pl) => router.route(
+                    "/metrics",
+                    get(|| async {
+                        use prometheus::{Encoder, TextEncoder};
+                        let mut buffer = Vec::new();
+                        let encoder = TextEncoder::new();
+                        encoder.encode(&prometheus::gather(), &mut buffer).unwrap();
+                        String::from_utf8(buffer).unwrap()
+                    }),
+                ),
                 None => router,
             },
         };
@@ -167,7 +176,8 @@ impl Server {
         // (Contrast with backend down -- this usually requires a response
         // of 502 Bad Gateway, which is already issued by the client handler.)
         router = router
-            .layer(tower_http::timeout::TimeoutLayer::new(
+            .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+                http::StatusCode::REQUEST_TIMEOUT,
                 listener.request_response_timeout,
             ))
             .layer(map_response(gateway_timeout));
