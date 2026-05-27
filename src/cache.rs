@@ -1,11 +1,10 @@
-use crate::metrics::CacheMetrics;
+use crate::metrics::Metrics;
 use axum::http;
 use axum::response::Response;
 use futures_util::FutureExt;
 use http::Request;
 use http_body_util::BodyExt;
 use itertools::Itertools;
-use opentelemetry::KeyValue;
 use prometheus_parse::{self, Sample};
 use std::collections::HashMap;
 use std::future::Future;
@@ -227,12 +226,14 @@ impl<KeyT: Eq + Hash + Clone + Sync + Send, EntryT: Sync + Send> DeadlineCacher<
 // resource and authentication credentials.
 pub struct CacheLayer {
     cacher: DeadlineCacher<String, CachedResponse>,
+    metrics: Option<Metrics>,
 }
 
 impl CacheLayer {
-    pub fn new(staleness: Duration) -> Self {
+    pub fn new(staleness: Duration, metrics: Option<Metrics>) -> Self {
         CacheLayer {
             cacher: DeadlineCacher::new(staleness),
+            metrics,
         }
     }
 }
@@ -243,7 +244,7 @@ impl<S> Layer<S> for CacheLayer {
     fn layer(&self, service: S) -> Self::Service {
         CacheService {
             cacher: self.cacher.clone(),
-            metrics: CacheMetrics::default(),
+            metrics: self.metrics.clone(),
             inner: service,
         }
     }
@@ -266,7 +267,7 @@ struct CachedResponse {
 // incoming requests designated as cacheable.
 pub struct CacheService<S> {
     cacher: DeadlineCacher<String, CachedResponse>,
-    metrics: CacheMetrics,
+    metrics: Option<Metrics>,
     inner: S,
 }
 
@@ -351,17 +352,16 @@ where
             let (res, cached) = cacher.get_or_insert_with(cache_key, fut).await;
 
             // Note the caching status of the returned page.
-            match cached {
-                true => metrics.http_cache_hits,
-                false => metrics.http_cache_misses,
+            if let Some(m) = &metrics {
+                let counter = if cached {
+                    &m.cache_hits
+                } else {
+                    &m.cache_misses
+                };
+                counter
+                    .with_label_values(&[res.status.as_str(), frontend_label.as_str()])
+                    .inc();
             }
-            .add(
-                1,
-                &[
-                    KeyValue::new("http_response_status_code", res.status.as_str().to_string()),
-                    KeyValue::new("frontend", frontend_label),
-                ],
-            );
 
             // Formulate a response based on the returned page.
             let mut respb = http::response::Response::builder().version(res.version);

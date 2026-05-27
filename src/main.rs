@@ -1,6 +1,4 @@
-use axum_otel_metrics::{HttpMetricsLayerBuilder, PathSkipper};
 use clap::Parser;
-use std::sync::Arc;
 use tokio::task::JoinSet;
 
 #[derive(Parser)]
@@ -20,35 +18,28 @@ pub async fn run() {
 
     simple_logger::init_with_level(log::Level::Info).unwrap();
 
+    // Multiple TLS-using deps (rustls, hyper-rustls, tokio-rustls, reqwest)
+    // may each pull in their own crypto provider feature, so rustls 0.23
+    // can't pick one automatically. Install aws_lc_rs explicitly.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let cfg = maybecfg.unwrap();
-    let mut telemetry = cfg.metrics.clone().map(|listener| {
-        let handler = listener.handler.clone();
-        (
-            listener,
-            HttpMetricsLayerBuilder::new()
-                .with_service_name(env!("CARGO_PKG_NAME").to_string())
-                .with_service_version(env!("CARGO_PKG_VERSION").to_string())
-                .with_path(handler)
-                .with_skipper(PathSkipper::new_with_fn(Arc::new(move |_: &str| false)))
-                .build(),
-        )
-    });
+    let metrics = cfg
+        .metrics
+        .clone()
+        .map(|listener| (listener, metrics_proxy::metrics::Metrics::new()));
 
     let proxylist: Vec<metrics_proxy::config::HttpProxy> = cfg.into();
 
     for proxy in proxylist {
         let mut server = metrics_proxy::server::Server::from(proxy);
-        telemetry = match telemetry {
-            Some((t, m)) => {
-                server = server.with_telemetry(m.clone());
-                Some((t, m))
-            }
-            _ => None,
-        };
+        if let Some((_, m)) = &metrics {
+            server = server.with_metrics(m.clone());
+        }
         set.spawn(async move { server.serve().await });
     }
-    if let Some((t, m)) = telemetry {
-        let server = metrics_proxy::server::Server::for_service_metrics(t).with_telemetry(m);
+    if let Some((listener, m)) = metrics {
+        let server = metrics_proxy::server::Server::for_service_metrics(listener).with_metrics(m);
         set.spawn(async move { server.serve().await });
     }
 
