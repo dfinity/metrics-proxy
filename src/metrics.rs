@@ -10,7 +10,7 @@ use http_body::Body;
 use pin_project_lite::pin_project;
 use prometheus::{
     process_collector::ProcessCollector, Encoder, HistogramOpts, HistogramVec, IntCounterVec,
-    IntGaugeVec, Opts, Registry, TextEncoder,
+    IntGauge, IntGaugeVec, Opts, Registry, TextEncoder,
 };
 use tower::{Layer, Service};
 
@@ -202,21 +202,45 @@ where
             .to_string();
         let req_size = approximate_request_size(&req) as f64;
 
-        self.metrics
-            .active_requests
-            .with_label_values(&[&method, &url_scheme])
-            .inc();
+        let active = ActiveRequestGuard::new(
+            self.metrics
+                .active_requests
+                .with_label_values(&[&method, &url_scheme]),
+        );
 
         MetricsFuture {
             inner: self.inner.call(req),
             start: Instant::now(),
             method,
-            url_scheme,
             path,
             host,
             req_size,
+            _active: active,
             metrics: self.metrics.clone(),
         }
+    }
+}
+
+/// RAII guard for the `active_requests` gauge: increments on construction,
+/// decrements on drop. Using a guard (rather than a manual `dec()` in `poll`)
+/// ensures the gauge is balanced on every exit path — success, error, *and*
+/// future cancellation (e.g. client disconnect). Without this, an unbalanced
+/// counter would drift upward and break the "high gauge = possible DoS"
+/// indicator documented in the README.
+struct ActiveRequestGuard {
+    gauge: IntGauge,
+}
+
+impl ActiveRequestGuard {
+    fn new(gauge: IntGauge) -> Self {
+        gauge.inc();
+        ActiveRequestGuard { gauge }
+    }
+}
+
+impl Drop for ActiveRequestGuard {
+    fn drop(&mut self) {
+        self.gauge.dec();
     }
 }
 
@@ -226,10 +250,10 @@ pin_project! {
         inner: F,
         start: Instant,
         method: String,
-        url_scheme: String,
         path: String,
         host: String,
         req_size: f64,
+        _active: ActiveRequestGuard,
         metrics: Metrics,
     }
 }
@@ -247,11 +271,6 @@ where
             Poll::Ready(r) => r?,
             Poll::Pending => return Poll::Pending,
         };
-
-        this.metrics
-            .active_requests
-            .with_label_values(&[this.method, this.url_scheme])
-            .dec();
 
         let latency = this.start.elapsed().as_secs_f64();
         let status = response.status().as_u16().to_string();
