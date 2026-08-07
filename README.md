@@ -1,5 +1,9 @@
 # Prometheus metrics proxy
 
+> [!NOTE]
+>
+> This repository was merged with dfinity/ic: https://github.com/dfinity/ic/pull/11053
+
 This program is a metrics proxy that allows proxying of metrics served by
 standard Prometheus exporters, with the ability to select which exporters
 will be proxied, which metrics will appear in the results, with which
