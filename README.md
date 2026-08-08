@@ -207,7 +207,7 @@ rights of other developers under the license are protected.
 
 ## Development information
 
-When updating dependencies, `opentelemetry` must be pinned to the same
-version that `axum-otel-metrics` requires.  Otherwise, by virtue of
-magical global variables used by `opentelemetry`, custom metrics exported
-by this software will not be exported.
+HTTP request metrics and the `/metrics` endpoint are produced directly by
+the [`prometheus`](https://crates.io/crates/prometheus) crate; see
+[`src/metrics.rs`](./src/metrics.rs) for the metric definitions and the
+tower middleware that records them.

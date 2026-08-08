@@ -13,15 +13,48 @@ use std::path::PathBuf;
 use std::time::Duration;
 use url::Url;
 
-#[derive(Debug, PartialEq, Eq, Clone, Default)]
+#[derive(Debug, Default)]
 pub enum Protocol {
     #[default]
     Http,
     Https {
-        certificate: Vec<rustls::Certificate>,
-        key: rustls::PrivateKey,
+        certificate: Vec<rustls_pki_types::CertificateDer<'static>>,
+        key: rustls_pki_types::PrivateKeyDer<'static>,
     },
 }
+
+impl Clone for Protocol {
+    fn clone(&self) -> Self {
+        match self {
+            Protocol::Http => Protocol::Http,
+            Protocol::Https { certificate, key } => Protocol::Https {
+                certificate: certificate.clone(),
+                key: key.clone_key(),
+            },
+        }
+    }
+}
+
+impl PartialEq for Protocol {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Protocol::Http, Protocol::Http) => true,
+            (
+                Protocol::Https {
+                    certificate: c1,
+                    key: k1,
+                },
+                Protocol::Https {
+                    certificate: c2,
+                    key: k2,
+                },
+            ) => c1 == c2 && k1.secret_der() == k2.secret_der(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Protocol {}
 
 impl TryFrom<&ListenOn> for Protocol {
     type Error = ListenOnParseError;
@@ -40,65 +73,57 @@ impl TryFrom<&ListenOn> for Protocol {
                 }
             }
             "https" => {
-                if other.certificate_file.is_none() {
-                    return Err(Self::Error::CertificateFileRequired);
-                }
-                if other.key_file.is_none() {
-                    return Err(Self::Error::KeyFileRequired);
-                }
-                let certdata = std::fs::read(other.certificate_file.clone().unwrap());
-                if let Err(err) = certdata {
-                    return Err(Self::Error::CertificateFileReadError(err));
-                }
-                let keydata = std::fs::read(other.key_file.clone().unwrap());
-                if let Err(err) = keydata {
-                    return Err(Self::Error::KeyFileReadError(err));
-                }
+                let cert_path = other
+                    .certificate_file
+                    .as_ref()
+                    .ok_or(Self::Error::CertificateFileRequired)?;
+                let key_path = other
+                    .key_file
+                    .as_ref()
+                    .ok_or(Self::Error::KeyFileRequired)?;
 
-                let mut certs_cursor: Cursor<Vec<u8>> = Cursor::new(certdata.unwrap());
-                let certs_loaded = rustls_pemfile::certs(&mut certs_cursor);
-                if let Err(err) = certs_loaded {
-                    return Err(Self::Error::CertificateFileReadError(err));
-                }
-                let certs_parsed: Vec<rustls::Certificate> = certs_loaded
-                    .unwrap()
-                    .into_iter()
-                    .map(rustls::Certificate)
-                    .collect();
+                let certdata =
+                    std::fs::read(cert_path).map_err(Self::Error::CertificateFileReadError)?;
+                let keydata =
+                    std::fs::read(key_path).map_err(Self::Error::KeyFileReadError)?;
+
+                let mut certs_cursor: Cursor<Vec<u8>> = Cursor::new(certdata);
+                let certs_parsed: Vec<rustls_pki_types::CertificateDer<'static>> =
+                    rustls_pemfile::certs(&mut certs_cursor)
+                        .collect::<std::io::Result<Vec<_>>>()
+                        .map_err(Self::Error::CertificateFileReadError)?;
                 if certs_parsed.is_empty() {
-                    return Err(Self::Error::CertificateFileReadError(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return Err(Self::Error::CertificateFileReadError(std::io::Error::other(
                         format!(
                             "{} contains no certificates",
-                            other.certificate_file.clone().unwrap().display()
+                            cert_path.display()
                         ),
                     )));
                 }
 
-                let mut key_cursor = Cursor::new(keydata.unwrap());
-                let mut keys_loaded: Vec<Vec<u8>> = vec![];
+                let mut key_cursor = Cursor::new(keydata);
+                let mut keys_loaded: Vec<rustls_pki_types::PrivateKeyDer<'static>> = vec![];
 
-                match rustls_pemfile::pkcs8_private_keys(&mut key_cursor) {
-                    Err(err) => return Err(Self::Error::KeyFileReadError(err)),
-                    Ok(res) => keys_loaded.extend(res),
+                for k in rustls_pemfile::pkcs8_private_keys(&mut key_cursor) {
+                    let k = k.map_err(Self::Error::KeyFileReadError)?;
+                    keys_loaded.push(rustls_pki_types::PrivateKeyDer::Pkcs8(k));
                 }
                 key_cursor.set_position(0);
-                match rustls_pemfile::rsa_private_keys(&mut key_cursor) {
-                    Err(err) => return Err(Self::Error::KeyFileReadError(err)),
-                    Ok(res) => keys_loaded.extend(res),
+                for k in rustls_pemfile::rsa_private_keys(&mut key_cursor) {
+                    let k = k.map_err(Self::Error::KeyFileReadError)?;
+                    keys_loaded.push(rustls_pki_types::PrivateKeyDer::Pkcs1(k));
                 }
                 key_cursor.set_position(0);
-                match rustls_pemfile::ec_private_keys(&mut key_cursor) {
-                    Err(err) => return Err(Self::Error::KeyFileReadError(err)),
-                    Ok(res) => keys_loaded.extend(res),
+                for k in rustls_pemfile::ec_private_keys(&mut key_cursor) {
+                    let k = k.map_err(Self::Error::KeyFileReadError)?;
+                    keys_loaded.push(rustls_pki_types::PrivateKeyDer::Sec1(k));
                 }
 
                 if keys_loaded.len() != 1 {
-                    return Err(Self::Error::KeyFileReadError(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return Err(Self::Error::KeyFileReadError(std::io::Error::other(
                         format!(
                             "{} contains {} keys whereas it should contain only 1",
-                            other.key_file.clone().unwrap().display(),
+                            key_path.display(),
                             keys_loaded.len(),
                         ),
                     )));
@@ -106,7 +131,7 @@ impl TryFrom<&ListenOn> for Protocol {
 
                 Ok(Self::Https {
                     certificate: certs_parsed,
-                    key: rustls::PrivateKey(keys_loaded[0].clone()),
+                    key: keys_loaded.remove(0),
                 })
             }
             _ => Err(Self::Error::InvalidURL(InvalidURLError::UnsupportedScheme(

@@ -7,43 +7,46 @@ edition = "2021"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
+# Stay on serde_yaml 0.8 (despite being unmaintained): 0.9 made externally-tagged
+# enum variants with struct data require YAML `!tag` syntax, which would break
+# existing user configs (e.g. `reduce_time_resolution: { resolution: 5s }`).
 serde_yaml = "0.8"
-reqwest = { version = "0.11.18", default-features = false }
-tokio = { version = "1.29.1", features = ["rt", "rt-multi-thread", "macros"] }
-prometheus-parse = "0.2.4"
-axum = { version = "0.7.4", features = ["macros"] }
-hyper = "1.0"
-tower = { version = "0.4.13", features = ["timeout"] }
-tower-http = { version = "0.5.0", features = ["trace", "timeout"] }
-duration-string = { version = "0.3.0", features = ["serde"] }
-regex = "1.9.1"
-itertools = "0.11.0"
-clap = { version = "4.4.1", features = ["derive"] }
-rustls-pemfile = "1.0.3"
-rustls = "0.21.11"
-hyper-rustls = "0.24.1"
-exitcode = "1.1.2"
-pretty_assertions = "1.4.0"
-url = { version = "2.4.1", features = ["serde"] }
-prometheus = { version = "0.13.3", features = ["process"] }
-lazy_static = "1.4.0"
-axum-otel-metrics = { git = "https://github.com/ttys3/axum-otel-metrics.git", rev = "8f58e36e44cfbea4221dfc215c8e84c810d7d563" }
-opentelemetry = { version = "0.21.0", features = ["metrics"] }
-http = "1.0.0"
-futures-util = "0.3.28"
-http-body = "1.0.0"
-http-body-util = "0.1.0"
-hyper-util = { version = "0.1.1", features = [
+reqwest = { version = "0.12", default-features = false }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+prometheus-parse = "0.2"
+axum = { version = "0.7", features = ["macros"] }
+hyper = "1"
+tower = { version = "0.4", features = ["timeout"] }
+tower-http = { version = "0.6", features = ["trace", "timeout"] }
+duration-string = { version = "0.5", features = ["serde"] }
+regex = "1"
+itertools = "0.14"
+clap = { version = "4", features = ["derive"] }
+rustls-pemfile = "2"
+rustls = "0.23"
+rustls-pki-types = "1"
+hyper-rustls = "0.27"
+exitcode = "1"
+pretty_assertions = "1"
+url = { version = "2", features = ["serde"] }
+prometheus = { version = "0.13", features = ["process"] }
+http = "1"
+futures-util = "0.3"
+http-body = "1"
+http-body-util = "0.1"
+hyper-util = { version = "0.1", features = [
     "http1",
+    "http2",
+    "server-auto",
     "client",
     "client-legacy",
     "tokio",
 ] }
-log = "0.4.20"
-pin-project-lite = "0.2.13"
-tokio-rustls = "0.24.1"
-simple_logger = "4.3.0"
-rand = "0.8.5"
+log = "0.4"
+pin-project-lite = "0.2"
+tokio-rustls = "0.26"
+simple_logger = "5"
+rand = "0.9"
 
 [features]
 default = ["rustls-tls-webpki-roots"]
